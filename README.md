@@ -294,8 +294,14 @@ most jurisdictions, not a nicety.
 .venv/Scripts/python -m pytest                     # everything
 ```
 
-Current status on a clean checkout: **93 passed** (70 unit + 23 integration),
+Current status on a clean checkout: **115 passed** (92 unit + 23 integration),
 no skips.
+
+The unit split by concern: configuration merging and env-var layering, the
+annotation/prompt/score contracts, the CLI error contract, and the vision
+providers — `tests/unit/test_gemini_vlm.py` pins the Gemini request shape
+(`inline_data` parts, `x-goog-api-key`, one endpoint per model), which failures
+would otherwise only surface against the live API.
 
 The integration suite builds a 6-second three-colour clip with ffmpeg and runs
 all five stages against it. It needs no credentials and costs nothing, but it
