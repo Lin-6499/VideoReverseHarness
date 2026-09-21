@@ -148,7 +148,7 @@ zip 内已附「请先阅读 - harness 放置说明.txt」。也可以启动后�
 `overflow` / `fill` / `procs`）已从 asar 中排除。因此打包态的验证**从外部
 走 CDP**（Chrome DevTools 协议），等于「用调试器看进程内部」，比截图更硬。
 
-十条命令覆盖十种口径：
+十二条命令覆盖十二种口径：
 
 ```bash
 npm run verify:paths              # 路径解析单元验证（14 项，无需启动应用）
@@ -159,6 +159,8 @@ npm run verify:model              # 模型配置链路：校验 → 环境变量
 npm run verify:model-ui           # 模型设置界面：显隐、预填、校验、预览脱敏（25 项）
 npm run verify:model-packaged     # 打包产物内含全部模型配置文件（7 项，秒级）
 npm run verify:model-packaged-ui  # 打包态「测试连接」：脚本进包 + 报错来自网络层（12 项）
+npm run verify:error-hints        # 服务端报错 → 中文指引的翻译规则（6 项，无需启动应用）
+npm run verify:error-display      # 长报错在界面里能否被读出来（8 项）
 npm run verify:zip                # 解压交付包 → 从解压副本启动并用（9 项）
 npm run verify:zip-content        # 交付包内的代码是否含本轮改动（无需解压，秒级）
 ```
@@ -170,7 +172,7 @@ harness 本体另有一套 pytest（**115 项**），其中 `tests/unit/test_gem
 cd D:\HarnessTest && .venv\Scripts\python.exe -m pytest -q
 ```
 
-上述十条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
+上述十二条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
 错误语义、字段映射、registry 接线）。两者不可互替 —— 桌面端那些脚本不碰
 `gemini_vlm.py` 的内部逻辑，只验「配置能否正确送达 harness」。
 
@@ -206,6 +208,33 @@ check('报错来自网络层（说明脚本正常执行）',
 出来能跑」，但没证明「解压出来的是**新版**代码」。完全可能出现打包流程正常、
 却因为打包时机早于改代码而交付旧渲染层的情况 —— 本轮就踩过一次。它直接从
 zip 里抽出 asar 检查特征串，不落 110MB 到磁盘，秒级返回。
+
+`verify:error-hints` 与 `verify:error-display` 是一对，针对的是**同一个缺陷的
+两个独立侧面**，这也是它们必须分成两条命令的原因：
+
+服务端报错对用户等于不可读。实测抓到的阿里云欠费响应是这样：
+
+```json
+{"error":{"message":"Access denied, please make sure your account is in good
+standing. For details, see: https://help.aliyun.com/zh/model-studio/error-code
+#overdue-payment","type":"Arrearage","code":"Arrearage"},"request_id":"8605e472-…"}
+```
+
+真正能照做的信息只有两个记号：`type":"Arrearage"` 和 `#overdue-payment`。
+其余 300 字符是干扰。所以 `renderer.js` 里加了一层 `ERROR_HINTS`，把原文翻成
+「请到「费用与成本」确认并充值；充值后余额更新有延迟」这样的可执行指引。
+
+- **`verify:error-hints`** 验**翻译对不对**。它用 `vm.createContext` 只求值
+  `ERROR_HINTS` + `explainModelError` 两段源码 —— 而不是把规则复制进测试文件。
+  复制会让两边漂移：改了渲染层、测试还绿，等于没测。6 条用例**全部是实测抓到的
+  真实响应原文**，不是照着正则编的字符串，否则只能证明「正则匹配得上我自己写的字」。
+- **`verify:error-display`** 验**翻译能不能被看见**。这是纯布局问题，读代码看不
+  出来，而它**确实坏过**：结果区原本是一个 `<span>`，和「测试连接」按钮同处一个
+  `.row`，于是被按钮挤压成窄窄一列、逐字换行（见 `docs` 里的截图问题）。现在断言
+  四件事：占满容器宽度、位于按钮下方、高度受控、无空格长串可断行。
+
+分成两条是因为两者可以独立失效：翻译对了但显示不出来（本轮实际发生的），
+显示正常但翻译错了（正则写偏），都算没解决问题。
 
 `verify:zip` 是**交付口径的最后一道关**：前三条测的是 `dist/win-unpacked`
 （构建产物），只有这一条测「用户拿到手的东西」。两者的差异正是踩过的坑 ——

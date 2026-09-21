@@ -669,6 +669,69 @@ function setTestResult(text, level) {
   node.className = `test-result${level ? ` ${level}` : ''}`;
 }
 
+/*
+ * 把服务端返回的原始报错翻译成「用户能照着做」的一句话。
+ *
+ * 为什么值得做：服务端的报错虽然信息完整，但对用户等于不可读 ——
+ * 阿里云的欠费提示是一个 300+ 字符的 JSON，里面真正有用的只有
+ * `"type":"Arrearage"` 和 `#overdue-payment` 两个记号。
+ * 用户看到一坨 JSON 只会得出「程序坏了」的结论，而实际上问题在账号侧，
+ * 且解决方法非常明确（去充值）。
+ *
+ * 翻译规则全部来自实测真实响应，不是猜测。命中多条时取第一条 ——
+ * 判断顺序按「特异性从高到低」排，避免被宽泛的模式先截胡。
+ */
+const ERROR_HINTS = [
+  {
+    // 实测：{"type":"Arrearage"} + 文档锚点 #overdue-payment
+    test: /Arrearage|overdue-payment|account is in good standing/i,
+    hint: '阿里云账号欠费（错误码 Arrearage）。请到「费用与成本」确认并充值；\n'
+        + '充值后余额更新有延迟，等几分钟再试。',
+  },
+  {
+    test: /FreeTierOnly|free tier of the model has been exhausted/i,
+    hint: '该模型的免费额度已用尽。可到百炼控制台关闭「免费额度用完即停」，\n'
+        + '改为按量付费；或换一个模型。',
+  },
+  {
+    test: /limit_requests|exceeded your current request limit/i,
+    hint: '触发限流（错误码 limit_requests）。稍等片刻重试即可；\n'
+        + '若持续出现，说明该模型当前并发额度已被占满。',
+  },
+  {
+    test: /insufficient_quota|AllocationQuota/i,
+    hint: '配额不足。免费额度已到期或耗尽，且该模型不支持按量计费 ——\n'
+        + '需要换用其它模型。',
+  },
+  {
+    test: /Unpurchased|eligible for using the model/i,
+    hint: '尚未开通该模型的服务。请到百炼控制台确认已开通，\n'
+        + '并检查该模型是否在你的账号可购范围内。',
+  },
+  {
+    test: /InvalidApiKey|invalid_api_key|Authentication|Unauthorized|401/i,
+    hint: 'API Key 无效或已被删除。请到控制台重新生成一个。',
+  },
+  {
+    test: /model not found|does not exist|ModelNotExist|unknown model/i,
+    hint: '模型名不存在。请核对拼写，或换用界面预设里的模型名。',
+  },
+  {
+    // qwen-image-* 这类是「图像生成」模型，不支持对话式的视觉理解调用
+    test: /image length and width|must be larger than/i,
+    hint: '图片尺寸不满足模型要求。若在「测试连接」看到这条，属正常现象\n'
+        + '（测试图很小）；但真实运行时出现，说明视频关键帧异常。',
+  },
+];
+
+function explainModelError(message) {
+  const text = String(message || '');
+  for (const rule of ERROR_HINTS) {
+    if (rule.test.test(text)) return rule.hint;
+  }
+  return '';
+}
+
 async function testModelConnection() {
   const cfg = readModelConfig();
   if (cfg.needsKey && !cfg.apiKey) {
@@ -681,8 +744,14 @@ async function testModelConnection() {
   setTestResult('正在测试…', 'busy');
   try {
     const r = await window.vrh.testModel(cfg);
-    if (r && r.ok) setTestResult(`连接成功 · ${r.detail}`, 'ok');
-    else setTestResult(`失败：${(r && r.message) || '未知错误'}`, 'bad');
+    if (r && r.ok) {
+      setTestResult(`连接成功 · ${r.detail}`, 'ok');
+    } else {
+      const raw = (r && r.message) || '未知错误';
+      const hint = explainModelError(raw);
+      // 先给人能照做的结论，再附服务端原文 —— 顺序反了就又变成一坨 JSON。
+      setTestResult(hint ? `失败：${hint}\n\n服务端原文：\n${raw}` : `失败：${raw}`, 'bad');
+    }
   } catch (error) {
     setTestResult(`失败：${error.message}`, 'bad');
   } finally {

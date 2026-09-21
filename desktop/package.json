@@ -20,6 +20,8 @@
     "verify:model-ui": "node scripts/verify-model-ui.js",
     "verify:model-packaged": "node scripts/verify-model-packaged.js",
     "verify:model-packaged-ui": "node scripts/verify-model-packaged-ui.js",
+    "verify:error-hints": "node scripts/verify-error-hints.js",
+    "verify:error-display": "node scripts/verify-error-display.js",
     "icon": "node scripts/make-icon.js"
   },
   "author": "",

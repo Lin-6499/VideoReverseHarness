@@ -266,14 +266,27 @@ body {
 
 .row-actions { align-items: center; }
 
-/* 「测试连接」的结果文字。占用行内剩余空间，不换行挤掉按钮。 */
+/* 「测试连接」的结果文字。
+ *
+ * 单独占一行，不跟按钮挤在同一个 row 里 —— 服务端返回的报错经常长达几百字符
+ * （阿里云的欠费提示就有 300+ 字符），放在按钮旁边会被挤成窄窄一列，
+ * 逐字换行，根本读不出来。错误信息读不出来就等于没给。
+ */
 .test-result {
-  flex: 1;
-  min-width: 0;
+  margin: 8px 0 0;
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.5;
+  /* 长串（URL、request_id、无空格的 JSON）必须能断行，否则会撑破布局。 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* 错误里常有缩进与换行，保留下来更好读。 */
+  white-space: pre-wrap;
+  /* 结果太长时给个上限，避免把下面的按钮挤出视野。 */
+  max-height: 180px;
+  overflow-y: auto;
 }
+.test-result:empty { display: none; }
 .test-result.ok { color: var(--ok); }
 .test-result.bad { color: var(--bad); }
 .test-result.busy { color: var(--accent); }
