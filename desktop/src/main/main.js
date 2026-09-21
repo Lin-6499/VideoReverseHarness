@@ -141,15 +141,36 @@ function send(channel, payload) {
 // IPC 处理
 // --------------------------------------------------------------------------- //
 
-/** 环境探测。界面启动时调用一次，之后可由用户手动重试。 */
+/**
+ * 环境探测。界面启动时调用一次，之后可由用户手动重试。
+ *
+ * 兜底分支必须把**错误码与栈**留下来：曾经这里只取 `error.message`，
+ * 于是用户看到的是「环境探测失败：spawn UNKNOWN」—— 既没有 `code`，
+ * 也没有出错的那条命令，hint 还是空的，完全无从下手。
+ * 报错信息读不出来就等于没给。
+ */
 ipcMain.handle('vrh:doctor', async () => {
   try {
     return await environment.doctor(userRepoRoot());
   } catch (error) {
+    const code = error && error.code ? `（错误码 ${error.code}）` : '';
     return {
       ok: false,
       canRun: false,
-      problems: [{ kind: 'unknown', message: `环境探测失败：${error.message}`, hint: '' }],
+      problems: [{
+        kind: 'unknown',
+        message: `环境探测异常${code}：${error && error.message ? error.message : String(error)}`,
+        hint: [
+          '这是程序内部错误，不是你的配置问题。',
+          '',
+          '排查建议：',
+          '  1. 确认程序目录没有被安全软件拦截（spawn UNKNOWN 常见于此）',
+          '  2. 点「重新检测」再试一次；仍失败请附上下方技术细节反馈',
+          '',
+          '技术细节：',
+          String((error && error.stack) || error).split('\n').slice(0, 6).join('\n'),
+        ].join('\n'),
+      }],
     };
   }
 });

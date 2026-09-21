@@ -20,6 +20,7 @@ const { spawn } = require('child_process');
 const {
   makeIsolatedUserData,
   cleanupIsolatedUserData,
+  killAndWait,
 } = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -42,8 +43,9 @@ function check(label, ok, detail) {
   console.log(`   ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 }
 
-// 提到模块作用域，好让 catch 分支也能清理（中途失败时不留临时目录）。
+// 提到模块作用域，好让 catch 分支也能收进程 + 清理临时目录。
 let udd = null;
+let child = null;
 
 (async () => {
   console.log('=== 模型设置界面验证 ===\n');
@@ -58,7 +60,7 @@ let udd = null;
    * 详见 lib/isolated-user-data.js 的说明。
    */
   udd = makeIsolatedUserData('model-ui');
-  const child = spawn(
+  child = spawn(
     ELECTRON,
     ['.', `--debug-port=${PORT}`, ...udd.args],
     {
@@ -246,11 +248,13 @@ let udd = null;
   }
 
   ws.close();
-  child.kill('SIGTERM');
+  await killAndWait(child);          // 必须等它真退出，否则留下孤儿进程占住 dist/
   cleanupIsolatedUserData(udd);
   process.exit(passed === results.length ? 0 : 1);
-})().catch((error) => {
+})().catch(async (error) => {
   console.error(error);
+  // 失败路径同样要收进程 —— 这是最容易漏、也最容易留下孤儿的地方。
+  await killAndWait(child);
   cleanupIsolatedUserData(udd);
   process.exit(1);
 });

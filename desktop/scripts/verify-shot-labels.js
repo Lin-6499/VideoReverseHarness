@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+const { killAndWait } = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
 const EXE = path.join(ROOT, 'dist', 'win-unpacked', 'VRH 视频反推.exe');
@@ -32,6 +33,9 @@ function httpJson(port, p) {
   });
 }
 
+// 提到模块作用域，好让 catch 分支也能收进程（失败路径最容易漏）。
+let child = null;
+
 const results = [];
 function check(label, ok, detail) {
   results.push({ label, ok });
@@ -41,7 +45,7 @@ function check(label, ok, detail) {
 (async () => {
   console.log('=== 镜头卡片渲染验证 ===\n');
 
-  const child = spawn(EXE, [`--debug-port=${PORT}`], {
+  child = spawn(EXE, [`--debug-port=${PORT}`], {
     cwd: path.dirname(EXE),
     stdio: 'ignore',
     env: (() => {
@@ -62,7 +66,7 @@ function check(label, ok, detail) {
     } catch { /* 还没起来 */ }
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (!target) { console.log('CDP 未就绪'); child.kill(); process.exit(1); }
+  if (!target) { console.log('CDP 未就绪'); await killAndWait(child); process.exit(1); }
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   let id = 1;
@@ -108,7 +112,7 @@ function check(label, ok, detail) {
       if (c && fs.existsSync(c)) { videoPath = c; break; }
     } catch { /* 跳过 */ }
   }
-  if (!videoPath) { console.log('未找到可用视频'); child.kill(); process.exit(1); }
+  if (!videoPath) { console.log('未找到可用视频'); await killAndWait(child); process.exit(1); }
   console.log(`使用视频：${videoPath}\n`);
 
   // 读产物并渲染
@@ -137,7 +141,7 @@ function check(label, ok, detail) {
   })()`;
   const out = await evaluate(setup);
 
-  if (out && out.error) { console.log(`失败：${out.error}`); ws.close(); child.kill(); process.exit(1); }
+  if (out && out.error) { console.log(`失败：${out.error}`); ws.close(); await killAndWait(child); process.exit(1); }
 
   console.log(`镜头卡片数：${out.cardCount}`);
   console.log('\n--- 说明条 ---');
@@ -202,6 +206,12 @@ function check(label, ok, detail) {
   }
 
   ws.close();
-  child.kill('SIGTERM');
+  // 必须等它真退出：只发信号就 exit 会留下孤儿进程占住 dist/win-unpacked/，
+  // 导致后续 electron-builder 打包失败（删不掉旧目录）。
+  await killAndWait(child);
   process.exit(passed === results.length ? 0 : 1);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch(async (e) => {
+  console.error(e);
+  await killAndWait(child);
+  process.exit(1);
+});

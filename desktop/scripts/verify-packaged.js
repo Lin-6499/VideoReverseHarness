@@ -17,8 +17,12 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
+const { killAndWait } = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
+
+// 提到模块作用域，好让 main 的 catch 分支也能收进程（失败路径最容易漏）。
+let child = null;
 const UNPACKED = path.join(ROOT, 'dist', 'win-unpacked');
 const EXE = path.join(UNPACKED, 'VRH 视频反推.exe');
 const PORT = Number(process.env.VRH_DEBUG_PORT || 9222);
@@ -116,7 +120,7 @@ async function main() {
   const err = fs.openSync(path.join(ROOT, 'pkg-run.err'), 'w');
 
   console.log(`启动：${path.basename(EXE)} --debug-port=${PORT}`);
-  const child = spawn(EXE, [`--debug-port=${PORT}`], {
+  child = spawn(EXE, [`--debug-port=${PORT}`], {
     cwd: UNPACKED, env, detached: true, stdio: ['ignore', out, err],
   });
   child.unref();
@@ -231,7 +235,7 @@ async function main() {
     }
   } finally {
     try { ws.close(); } catch { /* 忽略 */ }
-    try { child.kill(); } catch { /* 忽略 */ }
+    await killAndWait(child);
   }
 
   const failed = results.filter((r) => !r.pass);
@@ -240,7 +244,12 @@ async function main() {
   console.log('='.repeat(56));
 
   // 稍等一下再退，避免 Windows 上子进程句柄还没释放就退出导致的噪音。
-  setTimeout(() => process.exit(failed.length ? 1 : 0), 800);
+  // 已经 await 过进程退出，不需要再靠 setTimeout 拖延。
+  process.exit(failed.length ? 1 : 0);
 }
 
-main().catch((e) => { console.error(`验证失败：${e.message}`); process.exit(1); });
+main().catch(async (e) => {
+  console.error(e);
+  await killAndWait(child);
+  process.exit(1);
+});

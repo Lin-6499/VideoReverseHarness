@@ -24,12 +24,14 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPTS = path.join(ROOT, 'scripts');
 const {
   makeIsolatedUserData,
   cleanupIsolatedUserData,
+  killAndWait,
 } = require('./lib/isolated-user-data');
 
 const results = [];
@@ -108,6 +110,104 @@ check('全部已隔离 userData',
   offenders.length === 0,
   offenders.length ? `未隔离：${offenders.join(', ')}` : `共 ${checked.length} 个`);
 
+// ---------------------------------------------- 1b. 进程回收
+console.log('\n【1b. 进程回收（防孤儿进程占住 dist/）】');
+
+/*
+ * 孤儿进程是实测踩到的坑：`child.kill()` 只对直接子进程发信号，而 Electron
+ * 会派生 renderer / GPU 等子进程。脚本紧接着 `process.exit()` 的话，父进程
+ * 来不及收尾，子进程留在系统里**占着 dist/win-unpacked/ 的文件句柄**，
+ * 导致后续 electron-builder 打包失败（`Device or resource busy`）。
+ *
+ * 所以断言：启动型脚本必须用 killAndWait（等它真退出），且**失败路径也要收**。
+ */
+const leaky = [];
+const teardownChecked = [];
+
+for (const f of files) {
+  const full = path.join(SCRIPTS, f);
+  const src = fs.readFileSync(full, 'utf8');
+
+  const launchesApp = /spawn\(/.test(src) && /--debug-port/.test(src);
+  if (!launchesApp) continue;
+
+  /*
+   * 跳过自己。
+   *
+   * 本脚本也会 spawn 一个 node 子进程（验证 killAndWait 行为），因此按
+   * 「含 spawn + debug-port」的判据会被自己扫进来 —— 但它 spawn 的不是
+   * 应用，是秒退的探测进程，不该套用「catch 里必须收应用进程」这条规则。
+   * 不排除的话会报一个**假失败**，而假失败比不检查更糟：它会让人开始
+   * 怀疑守卫本身，进而忽略它的真报警。
+   */
+  if (f === path.basename(__filename)) continue;
+
+  /*
+   * 跳过「故意分离」的启动器。
+   *
+   * launch-packaged-detached.js 的**全部意义就是让进程活过本次会话**
+   * （detached + unref）。对它套用「必须等进程退出」的规则是**方向反了** ——
+   * 那是它的功能，不是缺陷。所以按用途白名单排除，而不是按文件名猜测。
+   */
+  if (f === 'launch-packaged-detached.js') continue;
+
+  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  /*
+   * 「等进程真退出」有两种合格实现：
+   *   1. `killAndWait()` —— 跨平台，等 exit 事件（本项目的标准做法）
+   *   2. `taskkill /T`    —— Windows 专有，但能**一次杀掉整棵树**，
+   *                          连应用拉起的 Python 子进程一起收
+   *
+   * 第 2 种在某些场景下更彻底（Electron 会派生 renderer/GPU，还可能再派生
+   * Python），所以不应判它不合格 —— 把合格的实现误判为失败，会让人开始
+   * 怀疑守卫本身，进而忽略它的真报警。
+   */
+  const usesKillAndWait = /(^|[^A-Za-z0-9_])killAndWait\s*\(/.test(stripped);
+  const usesTaskkillTree = /taskkill[\s\S]{0,120}?\/T/.test(stripped);
+  const killsProperly = usesKillAndWait || usesTaskkillTree;
+
+  // catch / unhandledRejection 分支必须也收进程（这里最容易漏）。
+  const catchCollects = /(catch\(async[\s\S]{0,600}?|unhandledRejection[\s\S]{0,600}?)(killAndWait|taskkill|cleanup)/.test(stripped);
+
+  teardownChecked.push(f);
+  const ok = killsProperly && catchCollects;
+  console.log(`   ${ok ? 'OK  ' : '缺失'}  ${f}`
+    + (ok
+      ? `（${usesTaskkillTree && !usesKillAndWait ? 'taskkill /T 收整棵树' : '正常 + 失败路径都收'}）`
+      : `（${[
+        !killsProperly ? '未等待进程退出' : '',
+        !catchCollects ? '失败路径没收进程' : '',
+      ].filter(Boolean).join('；')}）`));
+  if (!ok) leaky.push(f);
+}
+
+check('存在需要检查进程回收的脚本（自检：没空转）',
+  teardownChecked.length > 0, `扫到 ${teardownChecked.length} 个`);
+check('全部脚本都等待进程真正退出',
+  leaky.length === 0,
+  leaky.length ? `有问题：${leaky.join(', ')}` : `共 ${teardownChecked.length} 个`);
+
+// killAndWait 自身的行为。
+// CommonJS 顶层没有 await，用 then 链把它接到底部的汇总之前。
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const killAndWaitChecks = (async () => {
+  const liveChild = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  await sleep(300);
+  const started = liveChild.exitCode === null && liveChild.signalCode === null;
+  await killAndWait(liveChild, 3000);
+  // 被信号终止时 exitCode 保持 null、signalCode 有值 —— 两个都要看。
+  const died = liveChild.exitCode !== null || liveChild.signalCode !== null;
+  check('killAndWait 能结束活着的进程', started && died,
+    `exitCode=${liveChild.exitCode} signalCode=${liveChild.signalCode}`);
+  check('killAndWait 对已退出进程是幂等的（不抛）', await (async () => {
+    try { await killAndWait(liveChild, 500); return true; } catch { return false; }
+  })());
+  check('killAndWait 传 null 不抛（防调用方漏判）', await (async () => {
+    try { await killAndWait(null, 500); return true; } catch { return false; }
+  })());
+})();
+
 // ---------------------------------------------- 2. 隔离工具本身的行为
 console.log('\n【2. 隔离工具行为】');
 
@@ -136,14 +236,19 @@ check('传 null 不抛异常（防调用方漏判）', (() => {
   try { cleanupIsolatedUserData(null); return true; } catch { return false; }
 })());
 
-const passed = results.filter((r) => r.ok).length;
-console.log(`\n${'='.repeat(56)}`);
-console.log(`合计 ${results.length} 项，通过 ${passed}，失败 ${results.length - passed}`);
-console.log('='.repeat(56));
-if (passed < results.length) {
-  console.log('\n未通过：');
-  results.filter((r) => !r.ok).forEach((r) => console.log(`  · ${r.label}`));
-  console.log('\n提示：会写配置的启动型脚本必须调用 makeIsolatedUserData()，');
-  console.log('并把返回的 args 展开进 spawn 的 argv。');
-}
-process.exit(passed === results.length ? 0 : 1);
+killAndWaitChecks.then(() => {
+  const passed = results.filter((r) => r.ok).length;
+  console.log(`\n${'='.repeat(56)}`);
+  console.log(`合计 ${results.length} 项，通过 ${passed}，失败 ${results.length - passed}`);
+  console.log('='.repeat(56));
+  if (passed < results.length) {
+    console.log('\n未通过：');
+    results.filter((r) => !r.ok).forEach((r) => console.log(`  · ${r.label}`));
+    console.log('\n提示：');
+    console.log('  · 会写配置的启动型脚本必须调用 makeIsolatedUserData()，');
+    console.log('    并把返回的 args 展开进 spawn 的 argv。');
+    console.log('  · 所有启动型脚本都要用 killAndWait() 等进程真退出，');
+    console.log('    且 catch 分支也要收 —— 否则孤儿进程会占住 dist/。');
+  }
+  process.exit(passed === results.length ? 0 : 1);
+});

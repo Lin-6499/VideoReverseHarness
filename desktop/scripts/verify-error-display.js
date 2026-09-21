@@ -21,6 +21,7 @@
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const { killAndWait } = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 9231;
@@ -54,11 +55,14 @@ function check(label, ok, detail) {
   console.log(`   ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 }
 
+// 提到模块作用域，好让 catch 分支也能收进程（失败路径最容易漏）。
+let child = null;
+
 (async () => {
   console.log('=== 错误信息显示验证 ===\n');
 
   const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
-  const child = spawn(ELECTRON, [ROOT, `--debug-port=${PORT}`], {
+  child = spawn(ELECTRON, [ROOT, `--debug-port=${PORT}`], {
     cwd: ROOT,
     stdio: 'ignore',
     env: (() => {
@@ -79,7 +83,7 @@ function check(label, ok, detail) {
     } catch { /* 未就绪 */ }
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (!target) { child.kill(); throw new Error('CDP 未就绪'); }
+  if (!target) { await killAndWait(child); throw new Error('CDP 未就绪'); }
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   let id = 1;
@@ -178,7 +182,9 @@ function check(label, ok, detail) {
     empty === 'none', `display: ${empty}`);
 
   ws.close();
-  child.kill('SIGTERM');
+  // 必须等它真退出：只发信号就 exit 会留下孤儿进程占住 dist/win-unpacked/，
+  // 导致后续 electron-builder 打包失败（删不掉旧目录）。
+  await killAndWait(child);
   const passed = results.filter((r) => r.ok).length;
   console.log(`\n${'='.repeat(56)}`);
   console.log(`合计 ${results.length} 项，通过 ${passed}，失败 ${results.length - passed}`);
@@ -188,4 +194,8 @@ function check(label, ok, detail) {
     results.filter((r) => !r.ok).forEach((r) => console.log(`  · ${r.label}`));
   }
   process.exit(passed === results.length ? 0 : 1);
-})().catch((error) => { console.error(error); process.exit(1); });
+})().catch(async (error) => {
+  console.error(error);
+  await killAndWait(child);
+  process.exit(1);
+});

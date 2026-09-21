@@ -16,8 +16,12 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn, execFileSync } = require('child_process');
+const { killAndWait } = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
+
+// 提到模块作用域，好让 main 的 catch 分支也能收进程（失败路径最容易漏）。
+let child = null;
 const DIST = path.join(ROOT, 'dist');
 const pkg = require('../package.json');
 const ZIP = path.join(DIST, `VRH-desktop-${pkg.version}-portable.zip`);
@@ -113,7 +117,7 @@ async function main() {
   const out = fs.openSync(path.join(ROOT, 'zip-verify.log'), 'w');
   const err = fs.openSync(path.join(ROOT, 'zip-verify.err'), 'w');
 
-  const child = spawn(EXE, [`--debug-port=${PORT}`], {
+  child = spawn(EXE, [`--debug-port=${PORT}`], {
     cwd: OUT, env, detached: true, stdio: ['ignore', out, err],
   });
   child.unref();
@@ -197,7 +201,7 @@ async function main() {
     record('预设已加载', ui.presets.length > 0, `${ui.presets.length} 项`);
   } finally {
     try { ws.close(); } catch { /* 忽略 */ }
-    try { child.kill(); } catch { /* 忽略 */ }
+    await killAndWait(child);
   }
 
   // ---- 清理联接（必须用 rmdir 语义，绝不能用递归删除穿透）----
@@ -213,7 +217,12 @@ async function main() {
   console.log(`合计 ${results.length} 项，通过 ${results.length - failed.length}，失败 ${failed.length}`);
   console.log('='.repeat(56));
   console.log(`解压副本保留在：${OUT}`);
-  setTimeout(() => process.exit(failed.length ? 1 : 0), 800);
+  // 已经 await 过进程退出，不需要再靠 setTimeout 拖延。
+  process.exit(failed.length ? 1 : 0);
 }
 
-main().catch((e) => { console.error(`验收失败：${e.message}`); process.exit(1); });
+main().catch(async (e) => {
+  console.error(e);
+  await killAndWait(child);
+  process.exit(1);
+});
