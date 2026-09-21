@@ -19,6 +19,10 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const {
+  makeIsolatedUserData,
+  cleanupIsolatedUserData,
+} = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
 const EXE = path.join(ROOT, 'dist', 'win-unpacked', 'VRH 视频反推.exe');
@@ -41,6 +45,9 @@ function check(label, ok, detail) {
   console.log(`   ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 }
 
+// 提到模块作用域，好让 catch 分支也能清理。
+let udd = null;
+
 (async () => {
   console.log('=== 打包态「测试连接」验证 ===\n');
 
@@ -49,7 +56,13 @@ function check(label, ok, detail) {
     process.exit(1);
   }
 
-  const child = spawn(EXE, [`--debug-port=${PORT}`], {
+  /*
+   * 必须隔离 userData：第 4 段要验「保存 → 读回」的持久化，会往配置里写
+   * 测试 Key。不隔离就会**覆盖用户真实保存的 API Key**。
+   * 详见 lib/isolated-user-data.js 的说明。
+   */
+  udd = makeIsolatedUserData('model-packaged-ui');
+  const child = spawn(EXE, [`--debug-port=${PORT}`, ...udd.args], {
     cwd: path.dirname(EXE),
     stdio: 'ignore',
     env: (() => {
@@ -182,5 +195,10 @@ function check(label, ok, detail) {
 
   ws.close();
   child.kill('SIGTERM');
+  cleanupIsolatedUserData(udd);
   process.exit(passed === results.length ? 0 : 1);
-})().catch((error) => { console.error(error); process.exit(1); });
+})().catch((error) => {
+  console.error(error);
+  cleanupIsolatedUserData(udd);
+  process.exit(1);
+});

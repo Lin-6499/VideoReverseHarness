@@ -148,8 +148,7 @@ zip 内已附「请先阅读 - harness 放置说明.txt」。也可以启动后�
 `overflow` / `fill` / `procs`）已从 asar 中排除。因此打包态的验证**从外部
 走 CDP**（Chrome DevTools 协议），等于「用调试器看进程内部」，比截图更硬。
 
-十二条命令覆盖十二种口径：
-
+十三条命令覆盖十三种口径：
 ```bash
 npm run verify:paths              # 路径解析单元验证（14 项，无需启动应用）
 npm run verify:packaged           # 启动应用 → 界面断言 → 真实跑一次（7 项）
@@ -161,6 +160,7 @@ npm run verify:model-packaged     # 打包产物内含全部模型配置文件�
 npm run verify:model-packaged-ui  # 打包态「测试连接」：脚本进包 + 报错来自网络层（12 项）
 npm run verify:error-hints        # 服务端报错 → 中文指引的翻译规则（6 项，无需启动应用）
 npm run verify:error-display      # 长报错在界面里能否被读出来（8 项）
+npm run verify:test-isolation     # 验证脚本不得覆盖用户真实配置（9 项，秒级）
 npm run verify:zip                # 解压交付包 → 从解压副本启动并用（9 项）
 npm run verify:zip-content        # 交付包内的代码是否含本轮改动（无需解压，秒级）
 ```
@@ -172,7 +172,7 @@ harness 本体另有一套 pytest（**115 项**），其中 `tests/unit/test_gem
 cd D:\HarnessTest && .venv\Scripts\python.exe -m pytest -q
 ```
 
-上述十二条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
+上述十三条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
 错误语义、字段映射、registry 接线）。两者不可互替 —— 桌面端那些脚本不碰
 `gemini_vlm.py` 的内部逻辑，只验「配置能否正确送达 harness」。
 
@@ -235,6 +235,34 @@ standing. For details, see: https://help.aliyun.com/zh/model-studio/error-code
 
 分成两条是因为两者可以独立失效：翻译对了但显示不出来（本轮实际发生的），
 显示正常但翻译错了（正则写偏），都算没解决问题。
+
+`verify:test-isolation` 盯的是一个**比前者更隐蔽的缺陷：验证脚本会破坏用户数据**。
+
+界面把模型配置写进 `%APPDATA%\vrh-desktop\model-config.json`。而验证脚本需要在
+界面里**真的敲进一个 Key** 才能验「输入 → 保存 → 读回」这条链路。两者一叠加就出事：
+
+```javascript
+input.value = 'sk-test-not-a-real-key';   // 脚本填的占位值
+// → input 监听器立刻 persistModelConfig()
+// → 用户真实保存的 API Key 被覆盖
+```
+
+**这不是假想，是实测踩到的。** 用户报告「我明明配好了却一直连接失败」，查配置
+发现里面躺着 22 个字符的 `sk-test-not-a-real-key`（来自 `verify-model-ui.js`）。
+
+这类缺陷有三个特征让它极难排查：
+- **静默** —— 验证全绿，没有任何报错
+- **跨轮次** —— 当轮没事，下一轮用户才发现配置被改
+- **伪装** —— 症状是「Key 无效」，排查方向会被引向「Key 是不是过期了」
+
+解法是 Electron 内建的 `--user-data-dir=<临时目录>`（Chromium 提供，主进程代码
+运行前就生效，**无需改应用**）。工具在 `scripts/lib/isolated-user-data.js`。
+
+这条守卫的检测逻辑本身也踩过一次**假通过**：最初只查源码里有没有
+`makeIsolatedUserData` 这个词，结果把它注释掉、只留
+`__DISABLED_makeIsolatedUserData` 时**子串仍然匹配**，守卫照样报「已隔离」。
+现在改成两个必要条件 —— **真的调用了工厂函数**（剔除注释、拒绝前缀污染）
+**且**返回值**真的展开进了 spawn 的 argv**。建了目录却不传参数，等于没隔离。
 
 `verify:zip` 是**交付口径的最后一道关**：前三条测的是 `dist/win-unpacked`
 （构建产物），只有这一条测「用户拿到手的东西」。两者的差异正是踩过的坑 ——

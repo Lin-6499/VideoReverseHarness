@@ -9,11 +9,18 @@
  * 这会把「跑通流程」这个最简单的入门路径挡在门外。
  *
  * 用 CDP 连开发态窗口，直接在页面里操作 DOM 并读回结果。
+ *
+ * **必须隔离 userData**：本脚本会往 Key 输入框填占位值，而输入框的 input
+ * 监听器会立刻持久化 —— 不隔离就会覆盖用户真实保存的 API Key（实测发生过）。
  */
 
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const {
+  makeIsolatedUserData,
+  cleanupIsolatedUserData,
+} = require('./lib/isolated-user-data');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 9227;
@@ -35,15 +42,25 @@ function check(label, ok, detail) {
   console.log(`   ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 }
 
+// 提到模块作用域，好让 catch 分支也能清理（中途失败时不留临时目录）。
+let udd = null;
+
 (async () => {
   console.log('=== 模型设置界面验证 ===\n');
 
   // 开发态启动。直接用 electron.exe 而非 .cmd 包装 ——
   // 后者会多一层 shell，退出时子进程容易残留。
   const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
+
+  /*
+   * 必须隔离 userData：本脚本会往 Key 输入框里填占位值，而输入框的
+   * `input` 监听器会立刻持久化 —— 不隔离就会**覆盖用户真实保存的 Key**。
+   * 详见 lib/isolated-user-data.js 的说明。
+   */
+  udd = makeIsolatedUserData('model-ui');
   const child = spawn(
     ELECTRON,
-    ['.', `--debug-port=${PORT}`],
+    ['.', `--debug-port=${PORT}`, ...udd.args],
     {
       cwd: ROOT,
       stdio: 'ignore',
@@ -230,5 +247,10 @@ function check(label, ok, detail) {
 
   ws.close();
   child.kill('SIGTERM');
+  cleanupIsolatedUserData(udd);
   process.exit(passed === results.length ? 0 : 1);
-})().catch((error) => { console.error(error); process.exit(1); });
+})().catch((error) => {
+  console.error(error);
+  cleanupIsolatedUserData(udd);
+  process.exit(1);
+});

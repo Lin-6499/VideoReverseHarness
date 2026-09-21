@@ -22,6 +22,7 @@
     "verify:model-packaged-ui": "node scripts/verify-model-packaged-ui.js",
     "verify:error-hints": "node scripts/verify-error-hints.js",
     "verify:error-display": "node scripts/verify-error-display.js",
+    "verify:test-isolation": "node scripts/verify-test-isolation.js",
     "icon": "node scripts/make-icon.js"
   },
   "author": "",
