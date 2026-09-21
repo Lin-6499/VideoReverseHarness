@@ -148,22 +148,26 @@ zip 内已附「请先阅读 - harness 放置说明.txt」。也可以启动后�
 `overflow` / `fill` / `procs`）已从 asar 中排除。因此打包态的验证**从外部
 走 CDP**（Chrome DevTools 协议），等于「用调试器看进程内部」，比截图更硬。
 
-十三条命令覆盖十三种口径：
+十四条命令覆盖十四种口径：
 ```bash
-npm run verify:paths              # 路径解析单元验证（14 项，无需启动应用）
+npm run verify:paths              # 路径解析单元验证（16 项，无需启动应用）
 npm run verify:packaged           # 启动应用 → 界面断言 → 真实跑一次（7 项）
 npm run verify:missing            # 隔离环境下「找不到 harness」的界面与引导（21 项）
 npm run verify:labels             # 镜头卡片渲染：中文标签、说明条、提示词仍为英文（10 项）
 npm run verify:model              # 模型配置链路：校验 → 环境变量 → Key 不进 argv → 子进程实读（25 项）
-npm run verify:model-ui           # 模型设置界面：显隐、预填、校验、预览脱敏（25 项）
+npm run verify:model-ui           # 模型设置界面：显隐、预填、校验、预览脱敏（26 项）
 npm run verify:model-packaged     # 打包产物内含全部模型配置文件（7 项，秒级）
 npm run verify:model-packaged-ui  # 打包态「测试连接」：脚本进包 + 报错来自网络层（12 项）
 npm run verify:error-hints        # 服务端报错 → 中文指引的翻译规则（6 项，无需启动应用）
 npm run verify:error-display      # 长报错在界面里能否被读出来（8 项）
 npm run verify:test-isolation     # 验证脚本不得覆盖用户真实配置（9 项，秒级）
+npm run verify:legacy-config      # 旧版配置（缺 presetId）能否被正确识别（6 项）
 npm run verify:zip                # 解压交付包 → 从解压副本启动并用（9 项）
 npm run verify:zip-content        # 交付包内的代码是否含本轮改动（无需解压，秒级）
 ```
+
+> **必须按批量口径跑。** 单独跑每一条都绿 ≠ 批量跑全绿 —— 见下方
+> 「验证脚本之间会互相污染」一节，那里记录了一个真实发生过的例子。
 
 harness 本体另有一套 pytest（**115 项**），其中 `tests/unit/test_gemini_vlm.py`
 （22 项）专门覆盖本轮新增的 Gemini provider：
@@ -172,7 +176,7 @@ harness 本体另有一套 pytest（**115 项**），其中 `tests/unit/test_gem
 cd D:\HarnessTest && .venv\Scripts\python.exe -m pytest -q
 ```
 
-上述十三条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
+上述十四条验的是**桌面端**；pytest 验的是 **provider 实现本身**（请求形状、
 错误语义、字段映射、registry 接线）。两者不可互替 —— 桌面端那些脚本不碰
 `gemini_vlm.py` 的内部逻辑，只验「配置能否正确送达 harness」。
 
@@ -310,6 +314,55 @@ input.value = 'sk-test-not-a-real-key';   // 脚本填的占位值
 **移除 junction 必须用 `rmdir`（不带 `/S`）。** 用 `Remove-Item -Recurse`
 或 `rm -rf` 会穿透联接，把真实的 harness 一起删掉。`link-harness.js`
 的 `remove` 动作已封装正确做法。
+
+### 验证脚本之间会互相污染（必须按批量口径跑）
+
+这一条是**真实踩过的坑**，而且它只在批量运行时才暴露 —— 单跑每一条都绿。
+
+`verify:paths`（`check-packaged-paths.js`）为了验证「exe 同级能找到 harness」，
+会在**便携版成品目录内**造一个假 harness 桩：
+
+```
+dist/win-unpacked/harness/
+  .venv/Scripts/python.exe      （空文件）
+  src/vrh/cli.py                （内容是 `# stub`）
+```
+
+这个位置恰好是 `looksLikeRepoRoot()` 会命中的地方，所以桩用完**必须**清干净。
+
+曾经的清理写成：
+
+```js
+try { fs.rmSync(fakeRoot, { recursive: true, force: true }); }
+catch { /* 清理失败不影响判定 */ }   // ← 静默吞掉，问题就在这里
+```
+
+于是桩残留时毫无提示，而 `verify:missing`（断言「找不到 harness」）复制便携
+目录时会把它一起带进隔离位置 —— 应用启动后**真的命中了一个 harness**，
+于是走进「子依赖缺失」分支，横幅报出：
+
+```
+未找到 ffmpeg
+harness 无法启动（vrh.cli 不可用）
+```
+
+而它断言的却是「未找到 harness 仓库」那一套文案，**8 条断言全红**，
+报错文案还把排查方向彻底带偏。
+
+现在做了三层防护：
+
+1. **清理必须出声 + 实际复核**。`rmSync` 不抛错也可能没删掉，所以删完
+   必须 `existsSync` 确认。
+2. **清不掉时给退路**。本环境的批量删除守卫按「回合」计配额，累计超阈值后
+   FAIL_CLOSED（报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`）；但 `renameSync`
+   不受限，所以退路是**改名挪出 `dist/win-unpacked`**，而不是把一个可恢复
+   的情况升级成硬失败。整个 `removeStub()` 保证不抛异常 —— 清理代码必须比
+   被测代码更不可能崩。
+3. **依赖方守住自己的前提**。`verify:missing` 在启动被测程序**之前**先扫描
+   隔离目录，发现 harness 就立刻失败退出并指出成因，而不是等 30 秒后吐出
+   一堆与真实原因无关的界面文案断言失败。
+
+**结论：交付前必须以批量口径跑一次全量。** 「逐个跑都绿」抓不到这类缺陷。
 
 **`--debug-port=<端口>` 是应用自己的开关**，不是 Chromium 的
 `--remote-debugging-port`。原因见下表：打包应用不认识后者，会直接退出。
