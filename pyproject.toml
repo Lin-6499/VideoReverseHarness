@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vrh"
+version = "0.1.0"
+description = "Video Reverse Harness - turn videos into structured prompts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Runtime deps are intentionally minimal. See docs/DESIGN.md for the rationale
+# behind every exclusion.
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+# Media stack. Needed for anything that actually touches video files.
+media = [
+    "scenedetect>=0.6.4",
+    "opencv-python-headless>=4.9",
+    "numpy>=1.26",
+]
+# Evaluation stack (CLIP scoring). Not needed for the production path.
+eval = [
+    "open-clip-torch>=2.24",
+    "pillow>=10.2",
+]
+# Dev tooling.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+# Everything at once.
+all = [
+    "vrh[media,eval,dev]",
+]
+
+[project.scripts]
+vrh = "vrh.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+markers = [
+    "integration: tests that need real media files or network access",
+    "slow: tests that take more than a few seconds",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true

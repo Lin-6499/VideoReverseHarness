@@ -1,0 +1,61 @@
+# VRH default configuration.
+#
+# Layering (lowest to highest precedence):
+#   configs/default.yaml  ->  configs/presets/<preset>.yaml  ->  configs/local.yaml
+# Environment variables override all of them with the VRH_ prefix.
+#
+# Nothing here requires a network connection. Providers default to "fake" so a
+# clean checkout runs end-to-end immediately.
+
+preset: t2v_generic
+
+providers:
+  vision:
+    name: fake              # fake | openai_vlm | gemini_vlm
+    model: ""               # openai_vlm -> gpt-4o-mini | gemini_vlm -> gemini-2.5-flash
+    api_key_env: ""         # name of the env var holding the key, never the key
+    base_url: ""            # empty = provider default; set to point at a gateway
+    timeout_s: 90.0
+    max_retries: 3
+    temperature: 0.0
+  llm:
+    name: fake              # fake | openai
+    model: ""               # openai -> gpt-4o-mini
+    api_key_env: ""
+    base_url: ""
+    timeout_s: 60.0
+    max_retries: 3
+    temperature: 0.0
+  asr:
+    name: fake              # fake | none
+    model: ""
+    timeout_s: 120.0
+  embedding:
+    name: fake              # fake | none
+    model: "ViT-B-32"
+    timeout_s: 60.0
+
+cache:
+  enabled: true
+  path: .cache/vrh_cache.sqlite3
+  ttl_days: 0               # 0 = never expire
+
+cost:
+  track: true
+  price_per_1k_input_tokens: 0.0
+  price_per_1k_output_tokens: 0.0
+  price_per_image: 0.0
+  max_usd_per_video: 0.0    # 0 = no cap
+
+compliance:
+  enabled: true
+  redact_faces: true
+  block_identifying_text: true
+  custom_blocklist: []
+
+logging:
+  level: INFO
+  json: false
+  show_cost: true
+
+output_root: output

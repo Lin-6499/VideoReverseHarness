@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: file:;">
+<title>VRH — 视频反推</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="statusbar" id="statusbar">
+  <div class="status-dot" id="statusDot"></div>
+  <span class="status-text" id="statusText">正在探测环境…</span>
+  <span class="status-detail" id="statusDetail"></span>
+  <div class="status-actions">
+    <button class="btn btn-quiet" id="btnRecheck" title="重新探测环境">重新探测</button>
+    <button class="btn btn-quiet" id="btnOpenOutput" title="在文件管理器中打开产物目录">打开产物目录</button>
+  </div>
+</header>
+
+<div class="banner" id="envBanner" hidden>
+  <div class="banner-title" id="envBannerTitle"></div>
+  <ul class="banner-list" id="envBannerList"></ul>
+  <div class="env-repo-row" id="envRepoRow" hidden>
+    <span class="env-repo-label">harness 目录</span>
+    <code class="env-repo-text" id="envRepoText"></code>
+    <!--
+      「怎么放」按钮只在找不到 harness 时出现。
+      它是错误横幅里唯一能让用户「自己看懂怎么办」的入口 ——
+      正文解释得再全，也不如让他看到一份完整的图文说明。
+    -->
+    <button class="btn btn-quiet" id="btnOpenNotice" type="button" hidden>怎么放？</button>
+    <button class="btn btn-quiet" id="btnPickRepo" type="button">手动指定</button>
+    <button class="btn btn-quiet" id="btnClearRepo" type="button" hidden>恢复自动查找</button>
+  </div>
+</div>
+
+<main class="layout">
+
+  <aside class="panel config-panel">
+    <div class="panel-head config-head">
+      <h2 class="panel-title">参数配置</h2>
+      <div class="panel-head-actions">
+        <button class="btn btn-quiet" id="btnToggleAllGroups" type="button">全部收起</button>
+      </div>
+    </div>
+
+    <!--
+      配置分五组，用原生 <details> 折叠。
+      分组顺序按「用户实际动手的先后」排：先选视频、再调成本、最后才是高级选项。
+      默认展开前两组 —— 这两组覆盖了绝大多数使用场景，后面三组按需展开即可。
+    -->
+    <!--
+      模型设置排在最前 —— 它决定后面所有环节的质量与成本，也是首次使用
+      必须先填的一项。默认折叠以外的组都按「动手顺序」排列，这一组是第 0 步。
+
+      API Key 用密码框，并提供「显示」切换：密码框避免旁观者看到，
+      但允许用户核对是否粘错（粘贴 Key 出错是极高频的失败原因）。
+    -->
+    <details class="cfg-group" id="groupModel" open>
+      <summary class="cfg-summary">
+        模型设置
+        <span class="cfg-badge" id="modelBadge">未配置 · 使用离线占位</span>
+      </summary>
+      <div class="cfg-body">
+
+        <div class="field">
+          <label for="providerPreset">模型服务</label>
+          <select id="providerPreset"></select>
+          <p class="field-hint" id="providerHint"></p>
+        </div>
+
+        <div class="field" id="fieldModelName" hidden>
+          <label for="modelName">模型名称</label>
+          <input type="text" id="modelName" placeholder="留空则使用服务默认模型" spellcheck="false">
+        </div>
+
+        <div class="field" id="fieldApiKey" hidden>
+          <label for="apiKey">API Key</label>
+          <div class="row">
+            <input type="password" id="apiKey" placeholder="粘贴你的 API Key" spellcheck="false" autocomplete="off">
+            <button class="btn btn-quiet" id="btnToggleKey" type="button">显示</button>
+          </div>
+          <p class="field-hint">
+            仅保存在本机，不会写入源码目录，也不会出现在日志或命令行里。
+          </p>
+        </div>
+
+        <div class="field" id="fieldBaseUrl" hidden>
+          <label for="baseUrl">接口地址</label>
+          <input type="text" id="baseUrl" placeholder="留空则使用服务默认地址" spellcheck="false">
+          <p class="field-hint" id="baseUrlHint"></p>
+        </div>
+
+        <div class="field">
+          <div class="row row-actions">
+            <button class="btn" id="btnTestModel" type="button">测试连接</button>
+            <span class="test-result" id="testModelResult"></span>
+          </div>
+          <p class="field-hint">
+            测试会真的调用一次模型（发一张小图），确认 Key 与网络可用 ——
+            避免等到跑了半天才在第 3 层失败。
+          </p>
+        </div>
+
+      </div>
+    </details>
+
+    <details class="cfg-group" open>
+      <summary class="cfg-summary">视频与预设</summary>
+      <div class="cfg-body">
+
+        <div class="field">
+          <label for="videoPath">视频文件</label>
+          <div class="row">
+            <input type="text" id="videoPath" placeholder="选择或输入视频路径" spellcheck="false">
+            <button class="btn" id="btnPickVideo">选择</button>
+          </div>
+          <p class="field-hint" id="videoHint"></p>
+        </div>
+
+        <div class="field">
+          <label for="preset">提示词预设</label>
+          <select id="preset"></select>
+          <p class="field-hint">决定槽位顺序与用词，适配不同生成模型。</p>
+        </div>
+
+      </div>
+    </details>
+
+    <details class="cfg-group" open>
+      <summary class="cfg-summary">切分与成本</summary>
+      <div class="cfg-body">
+
+        <div class="field">
+          <label for="keyframeStrategy">关键帧策略</label>
+          <select id="keyframeStrategy">
+            <option value="triple">triple · 首/中/尾三帧</option>
+            <option value="fixed">fixed · 固定间隔</option>
+            <option value="adaptive">adaptive · 光流自适应</option>
+          </select>
+          <p class="field-hint">adaptive 在运动剧烈的镜头多取帧，成本略高。</p>
+        </div>
+
+        <div class="field-group">
+          <div class="field">
+            <label for="cutThreshold">切分阈值</label>
+            <input type="number" id="cutThreshold" value="27" min="1" step="1">
+          </div>
+          <div class="field">
+            <label for="framesPerShot">每镜帧数</label>
+            <input type="number" id="framesPerShot" value="4" min="1" max="12" step="1">
+          </div>
+        </div>
+        <p class="field-hint hint-indent">
+          这两个是成本的主要驱动因素，调用量约等于
+          <code>镜头数 × 每镜帧数 × 轮数</code>。
+        </p>
+
+      </div>
+    </details>
+
+    <details class="cfg-group" id="groupScope">
+      <summary class="cfg-summary">运行范围</summary>
+      <div class="cfg-body">
+
+        <fieldset class="field field-first">
+          <legend class="sr-only">运行范围</legend>
+          <label class="radio"><input type="radio" name="scope" value="full" checked> 完整运行（L1–L5 五层全跑）</label>
+          <label class="radio"><input type="radio" name="scope" value="until"> 只运行到
+            <select id="untilStage" class="inline-select">
+              <option value="parse">解析</option>
+              <option value="segment" selected>切分</option>
+              <option value="understand">理解</option>
+              <option value="generate">生成</option>
+              <option value="evaluate">评测</option>
+            </select>
+          </label>
+          <label class="radio"><input type="radio" name="scope" value="only"> 只重跑
+            <select id="onlyStage" class="inline-select">
+              <option value="parse">解析</option>
+              <option value="segment">切分</option>
+              <option value="understand">理解</option>
+              <option value="generate" selected>生成</option>
+              <option value="evaluate">评测</option>
+            </select>
+          </label>
+          <p class="field-hint">重跑单层会复用前面的产物，不会重新调用视觉模型。</p>
+        </fieldset>
+
+      </div>
+    </details>
+
+    <details class="cfg-group" id="groupGate">
+      <summary class="cfg-summary">质量门</summary>
+      <div class="cfg-body">
+
+        <fieldset class="field field-first">
+          <legend class="sr-only">质量门</legend>
+          <label class="checkbox"><input type="checkbox" id="verify"> 启用质量评测，并判定是否达标</label>
+          <div class="field-group" id="gateFields">
+            <div class="field">
+              <label for="threshold">达标分数</label>
+              <input type="number" id="threshold" value="0.70" min="0" max="1" step="0.05">
+            </div>
+            <div class="field">
+              <label for="rounds">最多重试轮数</label>
+              <input type="number" id="rounds" value="1" min="1" max="5" step="1">
+            </div>
+          </div>
+          <label class="checkbox" id="failOnGateRow">
+            <input type="checkbox" id="failOnGate"> 未达标时以「质量门未过」结束（退出码 2）
+          </label>
+          <p class="field-hint">
+            「质量门未过」表示流水线跑通了但结果不达标，属于正常结果，不是程序故障。
+          </p>
+        </fieldset>
+
+      </div>
+    </details>
+
+    <details class="cfg-group">
+      <summary class="cfg-summary">其他选项</summary>
+      <div class="cfg-body">
+
+        <fieldset class="field field-first">
+          <legend class="sr-only">其他选项</legend>
+          <label class="checkbox"><input type="checkbox" id="noMotion"> 跳过光流运镜分析</label>
+          <label class="checkbox"><input type="checkbox" id="fresh"> 忽略已有检查点，从头运行</label>
+        </fieldset>
+
+      </div>
+    </details>
+  </aside>
+
+  <section class="main-column">
+
+    <div class="panel control-panel">
+      <div class="control-row">
+        <button class="btn btn-primary" id="btnRun">开始运行</button>
+        <button class="btn" id="btnDryRun" title="只跑到切分层，先看镜头数">干跑预演</button>
+        <button class="btn btn-danger" id="btnStop" disabled>停止</button>
+        <div class="run-meta" id="runMeta"></div>
+      </div>
+      <pre class="command-preview" id="commandPreview" hidden></pre>
+      <div class="stage-track" id="stageTrack"></div>
+    </div>
+
+    <div class="metrics" id="metrics">
+      <div class="metric"><span class="metric-label">镜头数</span><span class="metric-value" id="mShots">—</span></div>
+      <div class="metric"><span class="metric-label">总时长</span><span class="metric-value" id="mDuration">—</span></div>
+      <div class="metric"><span class="metric-label">花费</span><span class="metric-value" id="mCost">—</span></div>
+      <div class="metric"><span class="metric-label">综合分</span><span class="metric-value" id="mScore">—</span></div>
+    </div>
+
+    <div class="panel result-panel">
+      <div class="panel-head">
+        <h2 class="panel-title">运行结果</h2>
+        <div class="panel-head-actions">
+          <span class="badge" id="resultBadge" hidden></span>
+          <button class="btn btn-quiet" id="btnOpenReport" hidden>打开审阅页</button>
+        </div>
+      </div>
+
+      <div class="result-body" id="resultBody">
+        <p class="empty-hint">尚无运行结果。配置参数后点击「开始运行」。</p>
+      </div>
+
+      <div class="shot-list" id="shotList"></div>
+
+      <!-- 改动后才出现：无改动时不占位，避免界面长期挂着一块无效区域 -->
+      <div class="prompt-save-bar" id="promptSaveBar" hidden>
+        <span class="save-count" id="promptSaveCount"></span>
+        <span class="save-hint">提示词改动尚未写入文件</span>
+        <div class="save-actions">
+          <button class="btn btn-quiet" id="btnDiscardPrompt" type="button">全部撤回</button>
+          <button class="btn btn-primary" id="btnSavePrompt" type="button">保存修改</button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<!--
+  日志面板在窄屏下会被折叠成一行摘要（见 styles.css 的窄屏断点）。
+  折叠按钮放面板内，与标题同排，避免额外占用垂直空间。
+-->
+<section class="panel log-panel" id="logPanel">
+  <div class="panel-head">
+    <button class="btn btn-quiet log-toggle" id="btnToggleLog" type="button" hidden
+            aria-expanded="true" aria-controls="logBodyWrap">运行日志</button>
+    <h2 class="panel-title log-title">运行日志</h2>
+    <div class="panel-head-actions">
+      <span class="log-count" id="logCount">0 行</span>
+      <label class="log-filter">
+        <input type="checkbox" id="autoScroll" checked> 自动滚动
+      </label>
+      <select id="logLevel" title="按级别过滤日志">
+        <option value="ALL">全部级别</option>
+        <option value="INFO">常规及以上</option>
+        <option value="WARNING">警告及以上</option>
+        <option value="ERROR">仅错误</option>
+      </select>
+      <button class="btn btn-quiet" id="btnExportLogs">导出</button>
+      <button class="btn btn-quiet" id="btnClearLogs">清空</button>
+    </div>
+  </div>
+  <div class="log-body-wrap" id="logBodyWrap">
+    <p class="log-raw-notice" id="logRawNotice" hidden>
+      以下为流水线原始输出，保留英文以便与日志文件、社区资料对照。
+    </p>
+    <div class="log-body" id="logBody">
+      <p class="empty-hint">日志会在运行开始后实时出现。</p>
+    </div>
+  </div>
+</section>
+
+<dialog id="errorDialog">
+  <div class="dialog-head">
+    <h3 id="errorDialogTitle">错误详情</h3>
+    <button class="btn btn-quiet" id="btnCloseDialog">关闭</button>
+  </div>
+  <div class="dialog-body">
+    <p id="errorDialogMessage"></p>
+    <p class="dialog-sub">原始输出</p>
+    <pre id="errorDialogRaw"></pre>
+  </div>
+</dialog>
+
+<script src="renderer.js"></script>
+</body>
+</html>

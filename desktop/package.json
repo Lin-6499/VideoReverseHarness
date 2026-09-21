@@ -1,0 +1,76 @@
+{
+  "name": "vrh-desktop",
+  "version": "0.1.0",
+  "description": "VRH 桌面端 — 可视化调用视频反推 harness",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "clean": "node scripts/clean-dist.js",
+    "dist": "node scripts/clean-dist.js && electron-builder --win --dir",
+    "dist:zip": "node scripts/clean-dist.js && electron-builder --win --dir && node scripts/make-zip.js",
+    "smoke": "node scripts/run-all.js",
+    "verify:paths": "node scripts/check-packaged-paths.js",
+    "verify:packaged": "node scripts/verify-packaged.js",
+    "verify:missing": "node scripts/verify-missing-harness.js",
+    "verify:labels": "node scripts/verify-shot-labels.js",
+    "verify:zip": "node scripts/verify-zip.js",
+    "verify:zip-content": "node scripts/verify-zip-content.js",
+    "verify:model": "node scripts/verify-model-config.js",
+    "verify:model-ui": "node scripts/verify-model-ui.js",
+    "verify:model-packaged": "node scripts/verify-model-packaged.js",
+    "verify:model-packaged-ui": "node scripts/verify-model-packaged-ui.js",
+    "icon": "node scripts/make-icon.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.vrh.desktop",
+    "productName": "VRH 视频反推",
+    "copyright": "VRH",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/*.js",
+      "src/main/test-model.py",
+      "src/preload/*.js",
+      "src/renderer/**/*",
+      "package.json",
+      "!src/main/smoke.js",
+      "!src/main/measure.js",
+      "!src/main/overflow.js",
+      "!src/main/fill.js",
+      "!src/main/procs.js",
+      "!**/*.log",
+      "!**/*.map"
+    ],
+    "extraMetadata": {
+      "main": "src/main/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "VRH-desktop-${version}-${arch}.${ext}",
+      "icon": "build/icon.ico"
+    },
+    "compression": "maximum",
+    "asar": true,
+    "asarUnpack": [
+      "src/main/test-model.py"
+    ],
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false
+  }
+}

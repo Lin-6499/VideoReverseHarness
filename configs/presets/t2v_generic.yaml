@@ -1,0 +1,67 @@
+# Preset: generic text-to-video.
+#
+# A preset defines how structured slots are rendered into the final prompt.
+# Different target models want different vocabulary and ordering, so this is
+# data rather than code -- adding a model means adding a YAML file.
+#
+# Template fields map to ShotPrompt.slots keys produced at L4:
+#   subject, action, scene, camera, lighting, style, audio
+
+name: t2v_generic
+description: Model-agnostic prompt ordering. Safe default.
+
+# Field order in the rendered prompt. Earlier fields carry more weight in most
+# diffusion text encoders, so subject and action lead.
+slot_order:
+  - subject
+  - action
+  - scene
+  - camera
+  - lighting
+  - style
+
+# Optional per-slot wrappers. {value} is substituted.
+slot_templates:
+  camera: "camera: {value}"
+  lighting: "lighting: {value}"
+
+separator: ", "
+
+global_prompt_template: >
+  {genre} video, {pacing} pacing, {style}. {shot_summary}
+
+style_anchor_template: "{style}"
+
+# Negative prompt is shared across all shots unless a preset overrides it.
+negative_prompt: >-
+  blurry, low quality, distorted anatomy, extra limbs, watermark, text artifacts,
+  jittery motion, flickering
+
+# Optional per-model vocabulary remapping. Keys are canonical values produced by
+# L3; values are what this model understands best.
+camera_motion_map:
+  dolly_in: "push in"
+  dolly_out: "pull out"
+  pan_left: "pan left"
+  pan_right: "pan right"
+  tilt_up: "tilt up"
+  tilt_down: "tilt down"
+  zoom_in: "zoom in"
+  zoom_out: "zoom out"
+  handheld: "handheld shake"
+  static: "static camera"
+  tracking: "tracking shot"
+  unknown: ""
+
+shot_size_map:
+  extreme_wide: "extreme wide shot"
+  wide: "wide shot"
+  medium: "medium shot"
+  close: "close-up"
+  extreme_close: "extreme close-up"
+  unknown: ""
+
+constraints:
+  max_prompt_chars: 480
+  max_slots_per_shot: 8
+  drop_empty_slots: true

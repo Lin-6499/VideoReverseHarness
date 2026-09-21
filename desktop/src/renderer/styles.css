@@ -1,0 +1,1100 @@
+/* VRH 桌面端样式。深色主题，与 harness 生成的 report.html 视觉一致。
+ *
+ * 布局策略：桌面端（≥1200px）沿用原有的「左配置 + 右主列 + 底部日志」结构；
+ * 窗口收窄时按两个断点降级，最终在 <900px 变成单列整页滚动。整页滚动是移动端
+ * 的前提 —— 面板内嵌套滚动在触屏上会互相抢手势，且看不到全局。
+ */
+
+:root {
+  --bg: #14161a;
+  --surface: #1c1f26;
+  --surface-2: #22262f;
+  --line: #2c313b;
+  --line-strong: #3a404c;
+  --fg: #e6e8ec;
+  --muted: #9aa1ad;
+  --hint: #6f7683;
+
+  --accent: #6aa9ff;
+  --ok: #4ec9a0;
+  --bad: #ef6b6b;
+  --warn: #e0b341;
+
+  --ok-bg: #16302a;
+  --bad-bg: #33191b;
+  --warn-bg: #33290f;
+  --info-bg: #16283c;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  /* 触控目标最小高度。桌面端鼠标操作不需要这么大，在断点里才真正启用。 */
+  --tap: 34px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 视觉隐藏但保留给读屏器 —— 用于折叠分组里那些不再需要露出的 legend。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------- 状态栏 */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--hint);
+  flex: 0 0 auto;
+  transition: background 0.2s;
+}
+.status-dot.ok { background: var(--ok); }
+.status-dot.bad { background: var(--bad); }
+.status-dot.busy { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.status-text { font-weight: 500; }
+
+.status-detail {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.status-actions { margin-left: auto; display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* ------------------------------------------------------------- 环境横幅 */
+
+.banner {
+  background: var(--bad-bg);
+  border-bottom: 1px solid var(--bad);
+  padding: 12px 16px;
+  flex: 0 0 auto;
+}
+.banner-title { font-weight: 500; color: var(--bad); margin-bottom: 6px; }
+.banner-list { margin: 0; padding-left: 20px; color: var(--fg); font-size: 12.5px; }
+.banner-list li { margin-bottom: 4px; }
+.banner-list code {
+  background: rgba(255,255,255,0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* 问题条目：消息一行、操作指引一块。指引常含多行（「三选一」步骤），
+   用 pre-line 保住换行，否则会挤成一长串反而更难读。 */
+.banner-list .problem-msg { display: block; font-weight: 500; }
+.banner-list .problem-hint {
+  display: block;
+  margin: 3px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid rgba(255,255,255,0.14);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+/* harness 目录行：路径可能很长，让它可横向滚动而不是撑破横幅。 */
+.env-repo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+.env-repo-label { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+.env-repo-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.22);
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+/* ------------------------------------------------------------------ 布局 */
+
+.layout {
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 14px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.panel-head .panel-title { margin: 0; }
+.panel-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------------ 配置面板 */
+
+.config-panel {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* 配置面板标题行不再需要下边距 —— 紧跟其后的是分组标题。 */
+.config-head { margin-bottom: 4px; }
+
+/* ------------------------------------------------------ 配置分组（折叠） */
+
+/*
+ * 用原生 <details>/<summary>：键盘可达、读屏器可读、无需 JS 也能开合。
+ * JS 只负责「全部收起/展开」这类批量操作，单个分组的开合交给浏览器。
+ */
+.cfg-group {
+  border-top: 1px solid var(--line);
+  padding: 0;
+}
+.cfg-group:first-of-type { border-top: 0; }
+
+.cfg-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 11px 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+.cfg-summary::-webkit-details-marker { display: none; }
+.cfg-summary::before {
+  content: "▸";
+  color: var(--hint);
+  font-size: 10px;
+  transition: transform 0.18s;
+  flex: 0 0 auto;
+  width: 10px;
+}
+.cfg-group[open] > .cfg-summary::before { transform: rotate(90deg); }
+.cfg-summary:hover { color: var(--accent); }
+.cfg-summary:hover::before { color: var(--accent); }
+
+/*
+ * 折叠标题右侧的状态角标。
+ *
+ * 用 margin-left:auto 推到最右，这样即使标题文字长度变化，角标位置也稳定 ——
+ * 用户扫视一列折叠组时，角标对齐才好读。
+ */
+.cfg-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+/* 未完成配置时要显眼 —— 这是唯一会阻断运行的前置条件。 */
+.cfg-badge.warn { color: var(--warn); border-color: var(--warn); }
+.cfg-badge.ok { color: var(--ok); border-color: var(--ok); }
+
+.row-actions { align-items: center; }
+
+/* 「测试连接」的结果文字。占用行内剩余空间，不换行挤掉按钮。 */
+.test-result {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.test-result.ok { color: var(--ok); }
+.test-result.bad { color: var(--bad); }
+.test-result.busy { color: var(--accent); }
+
+.cfg-body { padding: 2px 2px 12px; }
+
+/* 折叠分组内部的 fieldset 不再需要自己的分隔线（分组标题已经承担了）。 */
+.field { margin-bottom: 14px; border: 0; padding: 0; }
+.field-first { border-top: 0; padding-top: 0; }
+
+.field label,
+.field legend {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+  padding: 0;
+}
+
+.field-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.hint-indent { margin: -8px 0 14px; }
+
+.field-hint {
+  font-size: 11.5px;
+  color: var(--hint);
+  margin: 5px 0 0;
+  line-height: 1.5;
+}
+.field-hint code {
+  background: rgba(255,255,255,0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  min-height: var(--tap);
+}
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus { border-color: var(--accent); }
+input.invalid { border-color: var(--bad); }
+
+.row { display: flex; gap: 6px; }
+.row input[type="text"] { flex: 1; min-width: 0; }
+
+.radio, .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--fg);
+  margin-bottom: 7px;
+  cursor: pointer;
+  min-height: var(--tap);
+}
+.radio input, .checkbox input { flex: 0 0 auto; margin: 0; width: 15px; height: 15px; }
+
+.inline-select { width: auto; padding: 3px 6px; font-size: 12px; min-height: 26px; }
+
+/* ------------------------------------------------------------------ 按钮 */
+
+.btn {
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: var(--tap);
+}
+.btn:hover:not(:disabled) { background: #2b303a; border-color: #4a515f; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 500;
+}
+.btn-primary:hover:not(:disabled) { background: #1c3d34; }
+
+.btn-danger {
+  background: var(--bad-bg);
+  border-color: #6b3336;
+  color: var(--bad);
+}
+.btn-danger:hover:not(:disabled) { background: #3d1e21; }
+
+.btn-quiet {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.btn-quiet:hover:not(:disabled) { background: var(--surface-2); color: var(--fg); }
+
+/* 窄屏下才显示的日志折叠按钮（桌面端标题即静态文本）。 */
+.log-toggle { display: none; }
+
+/* -------------------------------------------------------------- 主列 */
+
+.main-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.control-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.run-meta { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+.command-preview {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 12px 0 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------- 阶段进度条 */
+
+.stage-track {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.stage {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.3s;
+}
+.stage.done .stage-bar { background: var(--ok); }
+.stage.active .stage-bar { background: var(--warn); }
+.stage.failed .stage-bar { background: var(--bad); }
+.stage.skipped .stage-bar { background: #4a515f; }
+
+.stage-label {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stage.active .stage-label { color: var(--warn); }
+.stage.done .stage-label { color: var(--fg); }
+.stage-dur { display: block; color: var(--hint); font-size: 10.5px; }
+
+/* 层级代号（L1–L5）作为角标跟在中文名后面，便于与日志、命令行参数对照。 */
+.stage-code {
+  color: var(--hint);
+  font-size: 10px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+/* ---------------------------------------------------------------- 指标 */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.metric-label { font-size: 12px; color: var(--muted); }
+.metric-value { font-size: 22px; font-weight: 500; line-height: 1.2; }
+
+/* ------------------------------------------------------------ 结果面板 */
+
+.result-panel { flex: 0 0 auto; }
+
+.result-body { font-size: 13px; }
+
+.result-callout {
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.result-callout.success { background: var(--ok-bg); border: 1px solid var(--ok); }
+.result-callout.gate_failed { background: var(--warn-bg); border: 1px solid var(--warn); }
+.result-callout.interrupted { background: var(--info-bg); border: 1px solid var(--accent); }
+.result-callout.error { background: var(--bad-bg); border: 1px solid var(--bad); }
+
+.result-callout-title { font-weight: 500; margin-bottom: 4px; }
+.result-callout.success .result-callout-title { color: var(--ok); }
+.result-callout.gate_failed .result-callout-title { color: var(--warn); }
+.result-callout.interrupted .result-callout-title { color: var(--accent); }
+.result-callout.error .result-callout-title { color: var(--bad); }
+
+.result-actions { margin-top: 9px; display: flex; gap: 6px; }
+
+/* 补充说明：用于区分「没跑起来」与「跑了但结果不达标」这类需要额外解释的情形。 */
+.result-hint {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 结果字段表。桌面端左右结构（标签左、值右），窄屏改为上下结构。 */
+.kv {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 5px 14px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+}
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-word; }
+
+/* 分组小标题：横跨两列，用于把结果字段按语义分段，降低扫读成本。 */
+.kv-group {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--hint);
+  letter-spacing: 0.04em;
+}
+.kv-group:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+.global-prompt {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.global-prompt .label {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-bottom: 5px;
+}
+
+/* ------------------------------------------------------------ 镜头卡片 */
+
+.shot-list { display: flex; flex-direction: column; gap: 10px; }
+
+.shot-card {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.shot-card.review { border-left-color: var(--bad); }
+
+.shot-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.shot-id {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 500;
+  font-size: 12.5px;
+}
+.shot-time {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.badge.review { background: var(--bad-bg); color: var(--bad); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+
+.shot-prompt {
+  font-size: 12.5px;
+  line-height: 1.65;
+  margin: 0;
+  word-break: break-word;
+}
+
+/* ── 提示词编辑 ─────────────────────────────────────────────────────── */
+
+/* 编辑按钮推到行尾，与前面的徽标拉开距离 */
+.shot-edit-toggle { margin-left: auto; }
+
+.shot-negative {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  word-break: break-word;
+}
+.shot-negative b { color: var(--hint); font-weight: 500; }
+
+.shot-prompt-edit { margin-top: 2px; }
+
+.shot-field { display: block; margin-bottom: 9px; }
+.shot-field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: var(--hint);
+}
+
+/* 编辑框用等宽字体并允许纵向拉伸：提示词是结构化文本，逐字对比更省力 */
+.shot-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 64px;
+}
+.shot-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.shot-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.shot-edit-hint {
+  font-size: 11.5px;
+  color: var(--hint);
+  line-height: 1.5;
+}
+
+/* 有未保存改动的卡片：左侧加一条强调色，扫一眼就知道哪几张改过 */
+.shot-card.dirty { border-left-color: var(--accent); }
+
+/* ── 保存栏 ─────────────────────────────────────────────────────────── */
+
+.prompt-save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.28);
+}
+.save-count { font-size: 12.5px; font-weight: 500; color: var(--accent); }
+.save-hint { font-size: 11.5px; color: var(--hint); }
+.save-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.shot-issues {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--bad);
+}
+
+.shot-slots {
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 3px 14px;
+}
+.shot-slots span b { color: var(--hint); font-weight: 400; }
+
+/* 提示词为什么会是英文的说明条。视觉沿用日志区的中英混排说明条，
+   让「解释性文字」在全应用里长一个样。 */
+.shot-lang-note {
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  background: var(--surface-2);
+  border-left: 2px solid var(--hint);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.shot-lang-note b { color: var(--fg); font-weight: 500; }
+
+/* -------------------------------------------------------------- 日志面板 */
+
+.log-panel {
+  flex: 0 0 240px;
+  margin: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.log-body-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 中英混排说明条：只在日志里真的出现非界面产生的行时才显示一次。 */
+.log-raw-notice {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-left: 2px solid var(--hint);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.log-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.log-filter { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.log-panel select { width: auto; padding: 4px 8px; font-size: 12px; min-height: 28px; }
+
+.log-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  min-height: 0;
+}
+
+.log-line { display: flex; gap: 9px; word-break: break-word; }
+.log-line .ts { color: var(--hint); flex: 0 0 auto; }
+.log-line .lv { flex: 0 0 62px; }
+.log-line .msg { flex: 1; min-width: 0; }
+
+.log-line.INFO .lv { color: var(--accent); }
+.log-line.WARNING .lv { color: var(--warn); }
+.log-line.ERROR .lv, .log-line.CRITICAL .lv { color: var(--bad); }
+.log-line.RAW .lv { color: var(--hint); }
+.log-line.INFO .msg { color: var(--muted); }
+.log-line.WARNING .msg { color: var(--warn); }
+.log-line.ERROR .msg, .log-line.CRITICAL .msg { color: var(--bad); }
+.log-line.RAW .msg { color: var(--hint); }
+.log-line.hidden { display: none; }
+
+.empty-hint { color: var(--hint); font-size: 12.5px; margin: 0; }
+
+/* ---------------------------------------------------------------- 对话框 */
+
+dialog {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 0;
+  max-width: 720px;
+  width: 90%;
+  max-height: 86vh;
+}
+dialog::backdrop { background: rgba(0,0,0,0.6); }
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.dialog-head h3 { margin: 0; font-size: 14px; font-weight: 500; min-width: 0; }
+.dialog-head .btn { margin-left: auto; flex: 0 0 auto; }
+
+.dialog-body { padding: 16px; overflow-y: auto; max-height: calc(86vh - 56px); }
+.dialog-body p { margin: 0 0 12px; font-size: 13px; line-height: 1.65; }
+.dialog-sub { color: var(--muted); font-size: 12px !important; margin-bottom: 6px !important; }
+
+.dialog-body pre {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+ * 断点：中窄屏（900–1199px）
+ *
+ * 目标是不动布局结构、只压缩尺寸 —— 这一档覆盖笔记本分屏、小尺寸外接屏。
+ * 桌面端（≥1200px）在此之上完全不受影响。
+ * ======================================================================== */
+
+@media (max-width: 1199px) {
+  .layout {
+    grid-template-columns: 264px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .panel { padding: 12px 13px; }
+
+  /* 四列指标在 1000px 附近每个只剩约 200px，「总时长 / 综合分」会被压得难读。 */
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .log-panel { flex: 0 0 200px; margin: 0 10px 10px; }
+
+  .kv { grid-template-columns: 112px minmax(0, 1fr); gap: 5px 10px; }
+}
+
+/* ==========================================================================
+ * 断点：窄屏 / 触屏（<900px）
+ *
+ * 单列堆叠 + 整页滚动。这一档意味着窗口可以被收窄到手机宽度，
+ * 因此所有交互元素都要满足触控目标尺寸（≥44px），并且日志面板可折叠 ——
+ * 小屏上用户首先想看的是「跑出什么结果」，日志次之。
+ * ======================================================================== */
+
+@media (max-width: 899px) {
+  :root { --tap: 44px; }
+
+  /* 整页滚动取代各面板独立滚动：触屏上嵌套滚动会互相抢手势，
+     而且用户看不到「页面还有多少内容」。 */
+  body { overflow: auto; }
+
+  /*
+   * 窄屏：.layout 从「网格」转为「纵向堆叠」。
+   *
+   * 注意用 flex + order 而不是 display:contents。曾经试过 contents，结果是
+   * 主列的子项（控制面板/指标/结果面板）失去父盒子后按 DOM 顺序穿插到配置栏
+   * 周围，纵向位置自相矛盾。order 只对同一容器的直接子项生效，所以必须
+   * 保留 .main-column 这层盒子。
+   */
+  .layout {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    overflow: visible;
+    flex: 0 0 auto;
+    min-height: auto;
+    height: auto;
+  }
+
+  /* 纵向顺序：运行控制与结果最常用，配置次之。
+     日志面板是 .layout 的兄弟节点、DOM 上本来就在最后，无需 order 干预。 */
+  .main-column { order: 1; }
+  .config-panel { order: 2; }
+
+  /* 各面板不再自己滚，由 body 统一滚动。
+     这里必须把 min-height 重置回 auto：基类的 min-height:0 是给「面板内独立
+     滚动」用的，在整页滚动模式下它会让 .main-column 塌缩到 197px（内容实有
+     740px），子项溢出到容器外，配置栏于是被错误地排到中间。 */
+  .config-panel,
+  .main-column {
+    overflow: visible;
+    min-height: auto;
+    height: auto;
+  }
+
+  .log-panel {
+    margin: 0 10px 10px;
+    flex: 0 0 auto;
+    overflow: visible;
+    position: static;
+  }
+
+  .panel { padding: 13px 14px; }
+
+  /* 状态栏吸顶：滚到结果区时仍能看到运行状态与停止按钮。 */
+  .statusbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 10px 13px;
+  }
+
+  /* 状态栏细节文字会把「重新探测 / 打开产物目录」挤出屏幕，窄屏下隐藏。 */
+  .status-detail { display: none; }
+
+  .status-actions { gap: 4px; }
+  /* 状态栏按钮也要满足触控目标：实测 34px 偏小，容易点空。 */
+  .status-actions .btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    min-height: 44px;
+  }
+
+  /* 触控目标：主操作按钮铺满整行，避免并排时误触。 */
+  .control-row { gap: 8px; }
+  .control-row .btn { flex: 1 1 auto; justify-content: center; }
+  .run-meta { margin-left: 0; flex: 1 1 100%; }
+
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .metric { padding: 11px 12px; }
+  .metric-value { font-size: 20px; }
+
+  /* 结果字段改为上下结构：窄屏下 132px 的标签列会把路径类长值挤成多行，
+     破坏「标签—值」的视觉配对。 */
+  .kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    font-size: 12.5px;
+  }
+  .kv dt {
+    margin-top: 9px;
+    font-size: 11.5px;
+    color: var(--hint);
+  }
+  .kv dt:first-of-type { margin-top: 0; }
+  .kv dd { margin-bottom: 3px; }
+
+  .kv-group { margin-top: 10px; padding-top: 11px; }
+
+  /* 阶段条在窄屏改成两行网格：五个阶段横排时每个只剩约 70px，
+     中文标签会被截断成「解析视…」。 */
+  .stage-track {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px 6px;
+  }
+
+  .stage-label {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  /* 命令预览在窄屏会折成很多行，整行铺开会把结果区推到很下面。
+     限制高度并允许内部滚动，既能看清开头，也不挤压其他内容。 */
+  .command-preview {
+    font-size: 11px;
+    max-height: 92px;
+    overflow-y: auto;
+    padding: 7px 9px;
+  }
+
+  /* 日志面板：折叠成一行摘要，展开后给足高度。 */
+  .log-panel {
+    flex: 0 0 auto;
+    position: static;
+  }
+
+  .log-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg) !important;
+    font-size: 13px !important;
+    font-weight: 500;
+    padding: 8px 10px !important;
+    min-height: 44px;
+  }
+
+  /* 日志面板头在窄屏改为换行排布。
+     一排放不下「折叠按钮 + 行数 + 自动滚动 + 级别 + 导出 + 清空」，
+     硬挤会把「清空」推出视口外（实测 400px 下溢出 26px，右边点不到）。 */
+  .log-panel .panel-head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .log-panel .panel-head-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    gap: 8px;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  /* 折叠按钮与行数同排占满第一行，操作控件落到第二行。 */
+  .log-toggle { flex: 1 1 auto; justify-content: flex-start; }
+  .log-panel .panel-head > .log-count { margin-left: auto; }
+
+  /* 折叠按钮接管标题职责后，静态标题让位。 */
+  .log-title { display: none; }
+
+  .log-panel select { flex: 1 1 auto; min-width: 0; }
+  .log-panel .log-filter { flex: 0 0 auto; }
+
+  /* 日志面板里的控件同样要给足触控目标：
+     「自动滚动」复选框与级别下拉框在触屏上都要好点。 */
+  .log-panel .log-filter { min-height: 44px; }
+  .log-panel .log-filter input { width: 20px; height: 20px; }
+  .log-panel select { min-height: 44px; padding: 8px 10px; font-size: 12.5px; }
+
+  /* 内联下拉框（「只运行到 / 只重跑」后面那个）默认只有 26px 高，
+     在触屏上几乎点不中。 */
+  .inline-select {
+    min-height: 38px;
+    padding: 6px 8px;
+    font-size: 12.5px;
+  }
+
+  .log-panel.collapsed .log-body-wrap { display: none; }
+
+  /* ── 提示词编辑（窄屏）───────────────────────────────────────────── */
+
+  /* 编辑 / 撤回 / 保存都是高频触屏操作，统一下限 44px */
+  .shot-edit-toggle,
+  .shot-revert,
+  .prompt-save-bar .btn {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
+  /* 编辑按钮不再推到行尾：窄屏一行放不下徽标 + 按钮，会挤到一起 */
+  .shot-edit-toggle { margin-left: 0; }
+
+  .shot-input { min-height: 84px; font-size: 12.5px; }
+
+  /* 保存栏改上下结构：横向排布在 400px 下会把按钮压到换行且不齐 */
+  .prompt-save-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .save-actions { margin-left: 0; }
+  .save-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .save-hint { order: 3; }
+
+  /* 折叠态下操作按钮没有意义，隐藏以免误触。 */
+  .log-panel.collapsed .log-filter,
+  .log-panel.collapsed #logLevel,
+  .log-panel.collapsed #btnExportLogs,
+  .log-panel.collapsed #btnClearLogs { display: none; }
+
+  .log-body { max-height: 60vh; }
+
+  /* 日志行的时间戳 + 级别占掉大量横向空间，窄屏下只保留级别。 */
+  .log-line .ts { display: none; }
+  .log-line .lv { flex: 0 0 54px; }
+
+  dialog { width: 94%; }
+  .dialog-body { padding: 13px; }
+}
+
+/* 极窄（<520px）：指标单列，操作按钮完全堆叠。 */
+@media (max-width: 519px) {
+  .metrics { grid-template-columns: minmax(0, 1fr); }
+  .control-row .btn { flex: 1 1 100%; }
+  .stage-track { grid-template-columns: repeat(2, minmax(0, 1fr)); }  .field-group { grid-template-columns: minmax(0, 1fr); }
+  .shot-slots { grid-template-columns: minmax(0, 1fr); }
+
+  /* 目录路径在窄屏改上下结构，并按 label 量触控目标（≥44px）。 */
+  .env-repo-row { flex-direction: column; align-items: stretch; }
+  .env-repo-text { flex: 1 1 auto; }
+  .env-repo-row .btn { min-height: 44px; justify-content: center; }
+}
+
+/* 尊重系统「减少动态效果」设置。 */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

@@ -1,0 +1,55 @@
+# Preset: image-to-video.
+#
+# For I2V the first frame is supplied as an image, so the prompt must describe
+# *motion and change* rather than appearance. Subject and scene descriptions are
+# therefore de-emphasised and motion leads.
+
+name: i2v_generic
+description: Motion-forward ordering for image-to-video models.
+
+slot_order:
+  - action
+  - camera
+  - lighting
+  - style
+
+slot_templates:
+  camera: "camera movement: {value}"
+
+separator: ", "
+
+global_prompt_template: >
+  {genre} clip, {pacing} motion. {shot_summary}
+
+style_anchor_template: "maintain {style}"
+
+negative_prompt: >-
+  static, frozen frame, morphing, identity drift, flickering, blurry,
+  distorted anatomy, watermark
+
+camera_motion_map:
+  dolly_in: "slow push in"
+  dolly_out: "slow pull out"
+  pan_left: "pan left"
+  pan_right: "pan right"
+  tilt_up: "tilt up"
+  tilt_down: "tilt down"
+  zoom_in: "subtle zoom in"
+  zoom_out: "subtle zoom out"
+  handheld: "gentle handheld drift"
+  static: "minimal camera movement"
+  tracking: "follow subject"
+  unknown: ""
+
+shot_size_map:
+  extreme_wide: ""
+  wide: ""
+  medium: ""
+  close: "hold on subject"
+  extreme_close: "hold on detail"
+  unknown: ""
+
+constraints:
+  max_prompt_chars: 320
+  max_slots_per_shot: 6
+  drop_empty_slots: true

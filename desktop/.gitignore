@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+
+# 测试产物 —— 每次跑冒烟测试都会重新生成
+screenshots/
+*.log
+*.err
+smoke-report.json
+smoke-progress.log
+
+# 探针输出
+probe-*.log
+
+# Electron 在 Windows 上生成的 GPU 缓存目录
+NVIDIA Corporation/
+GPUCache/
+
+# 打包产物（体积 260MB+，随时可用 npm run dist 重建）
+dist/
+
+# 端到端验证时挂在便携目录下的 junction 指向真实 harness，
+# 绝不能提交 —— 用 rmdir 清理，不要用 rm -rf（会穿透删掉真实 harness）
+dist/win-unpacked/harness
+
+# verify:zip 解压出来的副本（269MB，含一份完整 Electron 运行时）。
+# 它存在只是为了验证「用户解压后拿到的东西能跑」，验证完就该删 ——
+# 提交它等于把整个便携包塞进仓库。
+.verify-extract/
