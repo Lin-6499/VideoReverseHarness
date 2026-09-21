@@ -46,6 +46,7 @@ console.log('【1. 静态扫描：启动型脚本是否隔离】');
 const files = fs.readdirSync(SCRIPTS).filter((f) => f.endsWith('.js'));
 const offenders = [];
 const checked = [];
+const unisolatedAll = [];
 
 for (const f of files) {
   const full = path.join(SCRIPTS, f);
@@ -55,11 +56,6 @@ for (const f of files) {
   const launchesApp = /spawn\(/.test(src) && /--debug-port/.test(src);
   if (!launchesApp) continue;
 
-  // 会往界面里填 Key / 调保存接口的，就属于「会写配置」。
-  // 注意 `saveModelConfig` 是 IPC 名，`apiKey` 是界面字段名，两者任一出现都算。
-  const writesConfig = /saveModelConfig|apiKey/.test(src);
-  if (!writesConfig) continue;
-
   /*
    * 判据必须**同时**看「调用了工具」和「参数真的传给了 spawn」。
    *
@@ -68,7 +64,7 @@ for (const f of files) {
    * 这是典型的**假通过**：检查了，但检查不出问题。
    *
    * 所以改成两个必要条件：
-   *   1. 真的调用了工厂函数（行首不是注释、名字不被前缀污染）
+   *   1. 真的调用了工厂函数（剔除注释、拒绝前缀污染）
    *   2. 返回值展开进了 spawn 的 argv
    * 只满足一个都算未隔离 —— 建了目录却不传参数，等于没隔离。
    */
@@ -76,8 +72,15 @@ for (const f of files) {
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''),
   );
   const passesArgs = /udd\.args/.test(src);
-
   const isolated = callsFactory && passesArgs;
+
+  // 会往界面里填 Key / 调保存接口的，属于「确定会写配置」。
+  // 注意 `saveModelConfig` 是 IPC 名，`apiKey` 是界面字段名，两者任一出现都算。
+  const writesConfig = /saveModelConfig|apiKey/.test(src);
+
+  if (!isolated) unisolatedAll.push(f);
+  if (!writesConfig) continue;
+
   checked.push(f);
   console.log(`   ${isolated ? 'OK  ' : '缺失'}  ${f}`
     + (isolated
@@ -86,6 +89,17 @@ for (const f of files) {
         !callsFactory ? '未调用隔离工具' : '未把隔离参数传给 spawn'
       }）`));
   if (!isolated) offenders.push(f);
+}
+
+// 分级：会写配置的必须隔离（硬失败）；暂未写配置的只提示。
+// 分级而非一刀切，是因为一刀切会把「读了配置但只读不写」的脚本也判红，
+// 那样守卫会因为噪声过多而被绕过 —— 而绕过一次之后就再没人看它了。
+if (unisolatedAll.filter((f) => !checked.includes(f)).length > 0) {
+  console.log('\n   （以下脚本启动了应用但未隔离；当前尚未写配置，属可接受，'
+    + '但一旦开始写就应加隔离）');
+  unisolatedAll
+    .filter((f) => !checked.includes(f))
+    .forEach((f) => console.log(`   提示  ${f}`));
 }
 
 check('存在需要隔离的启动型脚本（自检：扫描逻辑没空转）',
