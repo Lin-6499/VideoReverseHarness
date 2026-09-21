@@ -139,16 +139,86 @@ async function waitReady(client, timeoutMs = 90000) {
  *
  * 改为逐项复制并计数，任何一步失败都抛出来。
  */
-function copyTree(src, dest, counter = { files: 0, bytes: 0 }) {
+/**
+ * 判断目录项是否为「符号链接」。
+ *
+ * 用 `lstat` 而非 `readdir` 的 `Dirent.isSymbolicLink()`：两者对符号链接
+ * 都能识别，但 `lstat` 是通用入口（后面 findHarnessDirs 也要用同一判据）。
+ *
+ * ── 请注意：这里**识别不出 Windows junction** ──────────────────────
+ * Windows 的目录联接（junction）在 Node 里表现为普通目录：
+ * `isSymbolicLink() === false`、`isDirectory() === true`，且 `lstat` 与
+ * `stat` 的 dev/ino/mode **完全相同** —— Node 在 Windows 上不具备区分能力
+ * （实测确认：`fs.realpathSync` 对 junction 返回链接自身的路径而非目标）。
+ * 所以别指望靠这里拦住 junction；本脚本对 junction 的防线是下面 1b 的
+ * **事后校验**（启动应用前扫描隔离目录，发现 harness 就失败退出），
+ * 那是行为层面的检查，不依赖任何链接判定。
+ *
+ * 这个区分很重要：本脚本曾经把「隔离目录里出现可用 harness」误判为
+ * junction 未跳过，而真实成因是 `dist/win-unpacked/harness` 残留了
+ * check-packaged-paths.js 造出来的**桩目录**（详见 1b 的注释）。
+ */
+function isLinkLike(fullPath) {
+  try {
+    return fs.lstatSync(fullPath).isSymbolicLink();
+  } catch {
+    // 读不到（权限、竞态）时按「是链接」处理：宁可少复制，也不要把
+    // 外部依赖拖进隔离目录 —— 多复制的代价是验证失真，很隐蔽。
+    return true;
+  }
+}
+
+/**
+ * 扫描一棵目录树，返回其中「看起来像 harness」的目录。
+ *
+ * 判定条件与 `src/main/environment.js` 的 `looksLikeRepoRoot()` **保持一致** ——
+ * 这是刻意的：隔离校验要断言的正是「应用会不会把某个目录当成 harness」，
+ * 如果这里用一套宽松或更严的判据，就会出现「脚本说隔离干净、应用却命中了」
+ * 这种最糟糕的情况。判据必须同源。
+ */
+function findHarnessDirs(rootDir, found = [], depth = 0) {
+  // 深度上限防止异常目录结构导致无限递归（正常便携目录层级很浅）。
+  if (depth > 6) return found;
+  let entries;
+  try {
+    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+
+  const hasPackage = ['src/vrh/cli.py', 'src/vrh/__init__.py', 'vrh/cli.py', 'vrh/__init__.py']
+    .some((rel) => fs.existsSync(path.join(rootDir, ...rel.split('/'))));
+  const venvPy = process.platform === 'win32'
+    ? path.join(rootDir, '.venv', 'Scripts', 'python.exe')
+    : path.join(rootDir, '.venv', 'bin', 'python');
+  if (hasPackage && fs.existsSync(venvPy)) found.push(rootDir);
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const full = path.join(rootDir, entry.name);
+    // 不跟进链接：链接指向的树不在隔离目录的「实体内容」范围内，
+    // 应用是否能穿过去是另一回事，这里只关心复制进来的实体目录。
+    if (isLinkLike(full)) continue;
+    findHarnessDirs(full, found, depth + 1);
+  }
+  return found;
+}
+
+function copyTree(src, dest, counter = { files: 0, bytes: 0, skipped: [] }) {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
+
+    // 链接（含 Windows junction）一律跳过 —— 不把外部依赖拖进来。
+    // 必须用 lstat 判，不能用 entry.isSymbolicLink()，理由见 isLinkLike。
+    if (isLinkLike(from)) {
+      counter.skipped.push(from);
+      continue;
+    }
+
     if (entry.isDirectory()) {
       copyTree(from, to, counter);
-    } else if (entry.isSymbolicLink()) {
-      // 便携目录里通常没有联接，但真遇到就跳过 —— 不把外部依赖拖进来。
-      continue;
     } else {
       fs.copyFileSync(from, to);
       counter.files += 1;
@@ -203,9 +273,14 @@ async function main() {
   progress('1. 复制便携目录到隔离位置（上溯 4 级也无法到达真实 harness）');
   progress(`   ${UNPACKED}`);
   progress(`   → ${ISOLATED}`);
+  let copyResult = null;
   try {
-    const counter = copyTree(UNPACKED, ISOLATED);
-    progress(`   完成：${counter.files} 个文件，${(counter.bytes / 1024 / 1024).toFixed(0)} MB`);
+    copyResult = copyTree(UNPACKED, ISOLATED);
+    progress(`   完成：${copyResult.files} 个文件，${(copyResult.bytes / 1024 / 1024).toFixed(0)} MB`);
+    if (copyResult.skipped.length) {
+      progress(`   跳过 ${copyResult.skipped.length} 个链接（不拖入外部依赖）：`);
+      copyResult.skipped.forEach((p) => progress(`     · ${p}`));
+    }
   } catch (error) {
     console.error(`   复制失败：${error.message}`);
     cleanup();
@@ -218,6 +293,36 @@ async function main() {
     process.exit(1);
   }
   progress(`   exe：${isolatedExe}\n`);
+
+  // 1b. **守住隔离前提** —— 这是本脚本唯一的立论基础。
+  //
+  // 隔离目录里绝不能存在 harness。一旦存在，应用就会命中它并走
+  // 「子依赖缺失」分支（报「未找到 ffmpeg」「vrh.cli 不可用」），
+  // 而后续 8 条断言断的是「未找到 harness 仓库」分支 —— 全部假红，
+  // 且会把排查方向引向界面文案，与真实原因毫无关系。
+  //
+  // ── 真实踩过的成因 ────────────────────────────────────────────────
+  // 不是 junction，而是**桩目录残留**：`verify:paths` 会调
+  // `check-packaged-paths.js`，后者在 `dist/win-unpacked/harness` 造一个
+  // 只有 `.venv/Scripts/python.exe` + `src/vrh/cli.py` 的假 harness 来验证
+  // 「exe 同级能找到仓库」，用完本该删掉。但旧版清理失败被静默吞掉，
+  // 于是桩留在了便携目录里，被本脚本原样复制进隔离位置。
+  //
+  // 也就是说这是**跨脚本的污染**，单独跑本脚本永远正常、和 verify:paths
+  // 同批次跑才复现 —— 这类缺陷只能靠「启动前实测前提」来抓，靠读代码
+  // 是读不出来的（我曾据此误判为 junction 问题）。
+  // 对应地，check-packaged-paths.js 的清理已改为「删不掉就让脚本失败」。
+  progress('1b. 校验隔离前提：隔离目录内不得存在 harness');
+  const strayHarness = findHarnessDirs(ISOLATED);
+  if (strayHarness.length) {
+    console.error('   隔离失败：隔离目录里存在 harness，本验证无法成立。');
+    strayHarness.forEach((d) => console.error(`     · ${d}`));
+    console.error('   常见成因：verify:paths 的桩目录残留在 dist/win-unpacked/harness。');
+    console.error('   排查：确认该路径不存在，再重跑本脚本。');
+    cleanup();
+    process.exit(1);
+  }
+  progress('   通过：未发现任何 harness 目录\n');
 
   // 2. 启动
   progress(`2. 启动应用（调试端口 ${PORT}）`);

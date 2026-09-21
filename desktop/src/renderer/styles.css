@@ -263,6 +263,12 @@ body {
 /* 未完成配置时要显眼 —— 这是唯一会阻断运行的前置条件。 */
 .cfg-badge.warn { color: var(--warn); border-color: var(--warn); }
 .cfg-badge.ok { color: var(--ok); border-color: var(--ok); }
+/*
+ * 「模型类别不对」用 bad 而不是 warn —— 它和「缺 Key」不同：
+ * 缺 Key 是还没填，这个是**填了但填错类别**，Key 补得再对也跑不通，
+ * 所以要用更强的视觉权重，别让它淹没在一片黄色提示里。
+ */
+.cfg-badge.bad { color: var(--bad); border-color: var(--bad); }
 
 .row-actions { align-items: center; }
 

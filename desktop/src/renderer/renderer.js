@@ -542,6 +542,26 @@ async function loadPresets() {
  *
  * 注意这里不做「Key 是否正确」的判断 —— 那要发网络请求。存下来就填回去。
  */
+/**
+ * 按 `baseUrl` 反推这份配置属于哪个服务预设。
+ *
+ * 为什么需要：早期版本的配置**没有记录 presetId**。那种情况下如果直接回落到
+ * 第一项（离线占位），再拿保存值去覆盖模型名与地址，界面就会呈现自相矛盾的
+ * 状态 —— 下拉框写着「离线占位（不调用模型）」，输入框里却填着百炼的地址和
+ * 某个模型名。用户会以为自己在用真实模型，实际跑的是占位，白排查半天。
+ *
+ * `baseUrl` 是配置里最有辨识度的字段（各家的域名互不相同），用它反推最稳。
+ * 对不上就返回空串，交由调用方回落 —— 宁可回落，也不要猜错。
+ */
+function inferPresetIdFromBaseUrl(baseUrl) {
+  const target = String(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
+  if (!target) return '';
+  const hit = PROVIDER_PRESETS.find(
+    (p) => p.baseUrl && p.baseUrl.replace(/\/+$/, '').toLowerCase() === target,
+  );
+  return hit ? hit.id : '';
+}
+
 async function loadSavedModelConfig() {
   let saved = null;
   try {
@@ -550,7 +570,18 @@ async function loadSavedModelConfig() {
     saved = null;   // 读取失败不该阻断启动，退化为默认值即可
   }
 
-  const presetId = (saved && saved.presetId) || PROVIDER_PRESETS[0].id;
+  /*
+   * 预设的确定顺序（先精确、后推断、最后兜底）：
+   *   1. 配置里记着 presetId —— 最可靠，直接用
+   *   2. 没记（旧版本写的）—— 按 baseUrl 反推
+   *   3. 都定不了 —— 回落第一项
+   *
+   * 少了第 2 步就会产生「选中项与输入框不一致」的矛盾状态，见上面的说明。
+   */
+  const savedId = (saved && saved.presetId) || '';
+  const inferredId = savedId ? '' : inferPresetIdFromBaseUrl(saved && saved.baseUrl);
+  const presetId = savedId || inferredId || PROVIDER_PRESETS[0].id;
+
   const sel = el('providerPreset');
   // 保存的 id 可能来自旧版本、已不存在，回落到第一项而不是留空。
   sel.value = PROVIDER_PRESETS.some((p) => p.id === presetId)
@@ -630,15 +661,43 @@ function applyProviderPreset(previousId) {
 }
 
 /** 折叠标题上的状态角标 —— 让「有没有配好」在收起状态下也看得见。 */
+/**
+ * 判断模型名看起来是不是「图像生成」模型 —— 那类模型不能做视觉理解。
+ *
+ * 实测踩到过：用户把模型名填成 `qwen-image-2.0-pro`，测试连接一直失败，
+ * 排查方向被引向「Key 过期了」「是不是欠费了」，实际是**模型选错了类别**。
+ * `qwen-image-*` 是文生图模型，不接受对话式的图像理解调用。
+ *
+ * 这里只在**保存后、测试前**给一句提醒 —— 检测不了全部情况（模型名千变万化），
+ * 但这类错误代价高、提示成本低，值得单独拦一道。
+ */
+function looksLikeImageGenModel(model) {
+  const m = String(model || '').toLowerCase();
+  if (!m) return false;
+  return /(^|[-_/])(image|t2i|txt2img|dall-?e|stable-?diffusion|cogview|wanx|flux)/.test(m);
+}
+
 function refreshModelBadge() {
   const preset = currentProvider();
   const badge = el('modelBadge');
   const key = el('apiKey').value.trim();
+  const model = el('modelName').value.trim();
 
   // 离线占位永远可运行，如实说明它不调用模型即可。
   if (!preset.needsKey) {
     badge.textContent = preset.badge;
     badge.className = 'cfg-badge warn';
+    return;
+  }
+  /*
+   * 模型名看起来是图像生成模型 —— 优先于「缺 Key」提示。
+   *
+   * 顺序有讲究：这类错误不修正的话，Key 填得再对也跑不通，
+   * 所以它比「缺 Key」更该先说。
+   */
+  if (looksLikeImageGenModel(model)) {
+    badge.textContent = '模型类别可能不对（疑似图像生成）';
+    badge.className = 'cfg-badge bad';
     return;
   }
   if (!key) {

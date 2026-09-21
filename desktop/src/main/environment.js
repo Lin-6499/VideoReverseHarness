@@ -253,15 +253,38 @@ function isBareCommand(candidate) {
   return !candidate.includes(path.sep) && !candidate.includes('/');
 }
 
+/**
+ * 探测某个命令的版本号。失败一律返回 null，**绝不抛异常**。
+ *
+ * 这里的 `try/catch` 不是可有可无的：
+ *
+ * `execFile` 在某些情况下会**同步抛错**（实测 Windows 上命令无法启动时返回
+ * `spawn UNKNOWN`），而这个抛出发生在 `new Promise` 的**执行器内部** ——
+ * 它会直接逃出 Promise，**不会被回调里的 `if (error)` 捕获**，也不会变成
+ * rejected Promise，而是变成一个同步异常向上冒泡。
+ *
+ * 后果：`doctor()` 会炸穿，而它的 8 个调用点（`vrh:doctor` 之外的
+ * `vrh:artifacts` / `vrh:save-prompt` / `vrh:run` …）大多没有 catch，
+ * 于是用户看到的是「Error invoking remote method 'vrh:artifacts':
+ * Error: spawn UNKNOWN」这种与真实场景毫不相干的报错。
+ *
+ * 把调用包进 try/catch，同步抛才会被转成 resolve(null)，
+ * 与其他失败路径保持一致。
+ */
 function probeVersion(command, args = ['--version'], timeoutMs = 8000) {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: timeoutMs }, (error, stdout) => {
-      if (error) {
-        resolve(null);
-        return;
-      }
-      resolve(String(stdout).split('\n')[0].trim());
-    });
+    try {
+      execFile(command, args, { timeout: timeoutMs }, (error, stdout) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        resolve(String(stdout).split('\n')[0].trim());
+      });
+    } catch {
+      // 同步抛（如 spawn UNKNOWN）—— 当作「探测失败」，不向上冒泡。
+      resolve(null);
+    }
   });
 }
 
@@ -315,37 +338,45 @@ async function resolveFfmpeg(repoRoot) {
  */
 function probeHarness(python, repoRoot) {
   return new Promise((resolve) => {
-    execFile(
-      python,
-      ['-m', 'vrh.cli', 'doctor'],
-      { cwd: repoRoot, timeout: 30000, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } },
-      (error, stdout) => {
-        if (error) {
-          resolve(null);
-          return;
+    /*
+     * 同样要包 try/catch —— 理由见 probeVersion 的说明。
+     * `python` 即便非空，`execFile` 仍可能同步抛 spawn UNKNOWN。
+     */
+    try {
+      execFile(
+        python,
+        ['-m', 'vrh.cli', 'doctor'],
+        { cwd: repoRoot, timeout: 30000, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } },
+        (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          const text = String(stdout);
+          const version = (text.match(/^vrh\s+(\S+)/m) || [])[1] || null;
+          const preset = (text.match(/^\s+preset\s+(\S+)/m) || [])[1] || null;
+          const presets = (text.match(/^\s+presets found\s+(.+)$/m) || [])[1] || null;
+          const cache = /cache enabled\s+true/i.test(text);
+          const compliance = /compliance\s+enabled/i.test(text);
+          const providers = {};
+          for (const slot of ['vision', 'llm', 'asr', 'embedding']) {
+            const match = text.match(new RegExp(`^\\s+provider\\.${slot}\\s+(\\S+)`, 'm'));
+            if (match) providers[slot] = match[1];
+          }
+          resolve({
+            version,
+            preset,
+            presets: presets ? presets.split(',').map((s) => s.trim()) : [],
+            cacheEnabled: cache,
+            complianceEnabled: compliance,
+            providers,
+            runnable: /environment looks runnable/i.test(text),
+          });
         }
-        const text = String(stdout);
-        const version = (text.match(/^vrh\s+(\S+)/m) || [])[1] || null;
-        const preset = (text.match(/^\s+preset\s+(\S+)/m) || [])[1] || null;
-        const presets = (text.match(/^\s+presets found\s+(.+)$/m) || [])[1] || null;
-        const cache = /cache enabled\s+true/i.test(text);
-        const compliance = /compliance\s+enabled/i.test(text);
-        const providers = {};
-        for (const slot of ['vision', 'llm', 'asr', 'embedding']) {
-          const match = text.match(new RegExp(`^\\s+provider\\.${slot}\\s+(\\S+)`, 'm'));
-          if (match) providers[slot] = match[1];
-        }
-        resolve({
-          version,
-          preset,
-          presets: presets ? presets.split(',').map((s) => s.trim()) : [],
-          cacheEnabled: cache,
-          complianceEnabled: compliance,
-          providers,
-          runnable: /environment looks runnable/i.test(text),
-        });
-      }
-    );
+      );
+    } catch {
+      resolve(null);
+    }
   });
 }
 

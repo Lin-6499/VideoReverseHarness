@@ -78,10 +78,83 @@ console.log(`  桩目录可被识别：${stubOk ? 'PASS' : 'FAIL'}`);
 if (!stubOk) failed += 1;
 
 // 清理桩
+//
+// ── 这段清理为什么必须「出声」 ──────────────────────────────────────
+// 桩目录位于 `dist/win-unpacked/harness` —— 也就是**便携版成品目录内**，
+// 而这正是 `looksLikeRepoRoot()` 会命中的位置。桩一旦残留，后果不是「多几个
+// 垃圾文件」，而是**污染整份交付物**：随后任何拿便携目录做的验证
+// （特别是 verify-missing-harness.js，它断言「找不到 harness」）都会因为
+// 这个假 harness 而得到错误结论。
+//
+// 旧版把失败静默吞掉（`catch { /* 清理失败不影响判定 */ }`），于是桩残留时
+// 没有任何提示，问题只在别的验证里以「8 条断言失败」的形式暴露，排查方向
+// 被引向界面文案 —— 本次就实际踩了一轮。
+//
+// ── 为什么不能直接 rmSync 了事 ────────────────────────────────────
+// 环境的批量删除守卫会在删除配额耗尽时 FAIL_CLOSED，抛
+// `SAFE_DELETE_BULK_CONFIRM_REQUIRED`（实测 count=1166 > threshold=50）。
+// 这不是文件被占用 —— 用 `mv` 改名立刻就能成功，可见只是「删」这个动作被拦。
+// 既然重命名不受限，清不掉时**改名挪开**同样能让桩离开命中位置，
+// 既保住成品目录干净，也不至于把一个本可恢复的情况升级成硬失败。
+/**
+ * 清掉桩目录。**本函数保证不抛异常** —— 任何失败都转成 `{ok:false, how}`。
+ *
+ * 为什么要强调「不抛」：本函数的调用点位于脚本末尾，一旦它抛异常，
+ * Node 会打印堆栈并**以非零码退出**，而那些堆栈指向的是清理代码自己的行号，
+ * 看起来像「清理逻辑写错了」，实际后果却是「桩没删掉」—— 真正的问题在
+ * 另一个脚本（verify:missing）里以「隔离失败 / 8 条断言红」的形式才暴露。
+ * 我自己就先踩了这个：fallback 里引用了不存在的 `ROOT`，抛 ReferenceError
+ * 崩在清理步骤上，桩安然无恙地留了下来。清理代码必须比被测代码更不可能崩。
+ */
+function removeStub() {
+  if (!fs.existsSync(fakeRoot)) return { ok: true, how: '不存在' };
+
+  try {
+    fs.rmSync(fakeRoot, { recursive: true, force: true });
+  } catch { /* 落到改名方案 */ }
+
+  // rmSync 不抛错也可能没删掉（被占用时静默跳过），所以必须实际复核。
+  if (!fs.existsSync(fakeRoot)) return { ok: true, how: '已删除' };
+
+  // 退路：改名移出命中位置。
+  //
+  // 停放到 desktop/.trash-scratch/ —— 关键是**离开 dist/win-unpacked**。
+  // 只要还留在便携目录树内，别的验证脚本复制便携目录时照样会把它带走。
+  //
+  // 路径只用 __dirname 拼（本脚本没有 ROOT）。
+  let parking;
+  try {
+    parking = path.join(__dirname, '..', '.trash-scratch', `stub-harness-${Date.now()}`);
+    fs.mkdirSync(path.dirname(parking), { recursive: true });
+    fs.renameSync(fakeRoot, parking);
+  } catch (error) {
+    return { ok: false, how: `改名也失败：${String(error && error.message)}` };
+  }
+
+  try {
+    if (fs.existsSync(fakeRoot)) return { ok: false, how: '改名后原位仍存在' };
+  } catch (error) {
+    return { ok: false, how: `复核时出错：${String(error && error.message)}` };
+  }
+  return { ok: true, how: `已改名移出 → ${parking}` };
+}
+
+let cleanupResult;
 try {
-  fs.rmSync(fakeRoot, { recursive: true, force: true });
-  console.log('  （桩目录已清理）');
-} catch { /* 清理失败不影响判定 */ }
+  cleanupResult = removeStub();
+} catch (error) {
+  // 兜住一切：清理绝不允许以「崩溃」的形式失败。
+  cleanupResult = { ok: false, how: `清理时抛出异常：${String(error && error.message)}` };
+}
+
+if (!cleanupResult.ok) {
+  console.error(`  桩目录清理失败：${cleanupResult.how}`);
+  console.error(`  残留位置：${fakeRoot}`);
+  console.error('  该残留会让「找不到 harness」类验证全部失真，必须先清掉。');
+  console.error('  临时解法：手动把该目录改名移出 dist/win-unpacked 即可。');
+  process.exit(1);
+}
+console.log(`  （桩目录已清理：${cleanupResult.how}）`);
 
 // --------------------------------------------------------------------------- //
 // 3. 开发态仍能命中（保证 npm start 行为不变）

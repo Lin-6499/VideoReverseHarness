@@ -68,6 +68,67 @@ function userRepoRoot() {
 }
 
 /**
+ * 「环境未就绪」时返回的空环境对象。
+ *
+ * 字段要与 `environment.doctor()` 的正常返回保持一致（`ok` / `canRun` /
+ * `repoRoot` / `repoRootSource` / `searchedRoots` / `python` / `ffmpeg` /
+ * `harness` / `problems`），否则各调用点里的 `env.python.path`、`env.repoRoot`
+ * 判断会抛 TypeError —— 那就把「环境探测失败」换成了另一种崩溃，等于没修。
+ *
+ * 界面还会读 `searchedRoots` 来展示「找过哪些位置」，所以它必须是数组而非
+ * undefined（渲染进程 `.map()` 一个 undefined 同样会炸在界面里）。
+ */
+function emptyEnv(problems = []) {
+  return {
+    ok: false,
+    canRun: false,
+    repoRoot: null,
+    repoRootSource: null,
+    searchedRoots: [],
+    python: null,
+    ffmpeg: null,
+    harness: null,
+    problems,
+  };
+}
+
+/**
+ * 安全地调用 `environment.doctor()` —— **绝不抛异常**，失败时返回空环境。
+ *
+ * ── 为什么要包这一层 ──────────────────────────────────────────────
+ * `doctor()` 内部会 spawn 探针进程（`python --version`、`ffmpeg -version`…）。
+ * 在 Windows 上，当命令无法启动时 `execFile` 会**同步抛错**（`spawn UNKNOWN`），
+ * 且这个抛出发生在 `new Promise` 的**执行器内部** —— 它逃出 Promise，
+ * 既不会被回调里的 `if (error)` 捕获，也不会变成 rejected Promise。
+ * 结果就是一个同步异常一路冒泡穿出 `doctor()`。
+ *
+ * 之前本文件有 8 处调用 `doctor()`，只有 `vrh:doctor` 一处写了 try/catch。
+ * 于是同一个内部故障在不同入口下呈现完全不同的面貌：点「重新检测」能看到
+ * 带错误码和栈的完整说明，而点「读取产物」只得到一句
+ * `Error invoking remote method 'vrh:artifacts': Error: spawn UNKNOWN` ——
+ * 后者与用户真正该做的事（放好 harness、检查视频路径）毫无关系。
+ *
+ * 修在源头（`environment.probeVersion` 的 try/catch）是必要的，但**不够**：
+ * 探针不止一处，将来还会加。与其在每个调用点重复 try/catch —— 漏一个就复发 ——
+ * 不如统一走这个包装，让「探测失败」在所有入口下有同一种表现。
+ *
+ * @param {string|undefined} repoRoot 用户手选的 harness 目录
+ * @returns {Promise<object>} 环境对象；探测失败时为空环境（而非抛错）
+ */
+async function safeDoctor(repoRoot) {
+  try {
+    return await environment.doctor(repoRoot);
+  } catch (error) {
+    const code = error && error.code ? `（错误码 ${error.code}）` : '';
+    return emptyEnv([{
+      kind: 'unknown',
+      message: `环境探测异常${code}：${error && error.message ? error.message : String(error)}`,
+      hint: '这是程序内部错误，不是你的配置问题。请在设置里点「重新检测」重试。',
+    }]);
+  }
+}
+
+/**
  * 窗口图标路径（不存在时返回 null）。
  *
  * 开发态在 desktop/build/icon.png；打包后 electron-builder 会把
@@ -150,29 +211,25 @@ function send(channel, payload) {
  * 报错信息读不出来就等于没给。
  */
 ipcMain.handle('vrh:doctor', async () => {
-  try {
-    return await environment.doctor(userRepoRoot());
-  } catch (error) {
-    const code = error && error.code ? `（错误码 ${error.code}）` : '';
-    return {
-      ok: false,
-      canRun: false,
-      problems: [{
-        kind: 'unknown',
-        message: `环境探测异常${code}：${error && error.message ? error.message : String(error)}`,
-        hint: [
-          '这是程序内部错误，不是你的配置问题。',
-          '',
-          '排查建议：',
-          '  1. 确认程序目录没有被安全软件拦截（spawn UNKNOWN 常见于此）',
-          '  2. 点「重新检测」再试一次；仍失败请附上下方技术细节反馈',
-          '',
-          '技术细节：',
-          String((error && error.stack) || error).split('\n').slice(0, 6).join('\n'),
-        ].join('\n'),
-      }],
-    };
+  // 走 safeDoctor 而非直接调 doctor()：这里是唯一会**完整展示**环境问题的入口，
+  // 用户在这里看到的 hint 就是他的排查依据。探测失败时给的那段说明比
+  // `vrh:artifacts` 那种一句话的报错有价值得多，所以这一处保留详细文案。
+  const env = await safeDoctor(userRepoRoot());
+  if (!env.ok && env.problems && env.problems.length) {
+    const p = env.problems[0];
+    // 只有当问题确实来自探测异常时才补技术细节 —— 正常的「缺 ffmpeg」
+    // 之类问题有自己的 hint，不该被这里覆盖。
+    if (p.kind === 'unknown' && !p.hint.includes('技术细节')) {
+      p.hint = [
+        p.hint,
+        '',
+        '排查建议：',
+        '  1. 确认程序目录没有被安全软件拦截（spawn UNKNOWN 常见于此）',
+        '  2. 点「重新检测」再试一次；仍失败请附上下方技术细节反馈',
+      ].join('\n');
+    }
   }
+  return env;
 });
 
 /**
@@ -208,14 +265,14 @@ ipcMain.handle('vrh:pick-repo', async () => {
   }
 
   writeConfig({ repoRoot: chosen });
-  const env = await environment.doctor(chosen);
+  const env = await safeDoctor(chosen);
   return { ok: true, repoRoot: chosen, env };
 });
 
 /** 清除手选的 harness 目录，回到自动查找。 */
 ipcMain.handle('vrh:clear-repo', async () => {
   writeConfig({ repoRoot: null });
-  return { ok: true, env: await environment.doctor(undefined) };
+  return { ok: true, env: await safeDoctor(undefined) };
 });
 
 /**
@@ -301,7 +358,7 @@ ipcMain.handle('vrh:run', async (_event, config) => {
     return { ok: false, message: '已有运行在进行中' };
   }
 
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.canRun) {
     return { ok: false, message: '环境未就绪，无法启动运行' };
   }
@@ -350,7 +407,7 @@ ipcMain.handle('vrh:stop', async () => {
 
 /** 读取已有产物（用于打开历史结果）。 */
 ipcMain.handle('vrh:artifacts', async (_event, videoPath) => {
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.python || !env.repoRoot) return null;
   try {
     return artifacts.collectArtifacts(path.join(env.repoRoot, 'output'), videoPath);
@@ -366,7 +423,7 @@ ipcMain.handle('vrh:artifacts', async (_event, videoPath) => {
  * 不可信边界，让它指定任意写入位置等于把文件系统交出去。
  */
 ipcMain.handle('vrh:save-prompt', async (_event, edits) => {
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.repoRoot || !edits || !edits.videoPath) {
     return { ok: false, message: '环境未就绪或参数缺失' };
   }
@@ -377,7 +434,7 @@ ipcMain.handle('vrh:save-prompt', async (_event, edits) => {
 
 /** 把当前 prompt.json 另存为。 */
 ipcMain.handle('vrh:export-prompt', async (_event, { videoPath, defaultName }) => {
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.repoRoot || !videoPath) return { ok: false, message: '环境未就绪' };
 
   const id = artifacts.videoId(videoPath);
@@ -428,7 +485,7 @@ ipcMain.handle('vrh:export-logs', async (_event, { content, defaultName }) => {
 
 /** 读取 harness 已有的预设列表，供界面下拉框使用。 */
 ipcMain.handle('vrh:presets', async () => {
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.repoRoot) return [];
   const dir = path.join(env.repoRoot, 'configs', 'presets');
   try {
@@ -523,7 +580,7 @@ ipcMain.handle('vrh:save-model-config', async (_event, config) => {
  * 而不是在 Electron 里另写一份 HTTP 逻辑（那样两边会漂移，测试通过但实际跑不通）。
  */
 ipcMain.handle('vrh:test-model', async (_event, config) => {
-  const env = await environment.doctor(userRepoRoot());
+  const env = await safeDoctor(userRepoRoot());
   if (!env.repoRoot || !env.python || !env.python.path) {
     return { ok: false, message: 'harness 环境未就绪，无法测试模型连接' };
   }
