@@ -232,7 +232,25 @@ let child = null;
     return document.getElementById('commandPreview').textContent;
   })()`);
   check('预览里出现 provider 环境变量', /VRH_PROVIDERS__VISION__NAME=openai_vlm/.test(preview));
-  check('预览里出现模型名', /VRH_PROVIDERS__VISION__MODEL=qwen-vl-max/.test(preview));
+  /*
+   * 不钉死具体模型名。
+   *
+   * 这里原本断言的是 `MODEL=qwen-vl-max` —— 但那是在测「预设恰好写着某个型号」，
+   * 不是在测「预设的模型名被正确传进了命令」。模型迭代比代码快得多：
+   * qwen-vl-max 已归入旧版，界面换成 qwen3.8-max 之后，这条断言就会假失败，
+   * 而它想保护的功能其实完全正常。
+   *
+   * 改成从页面自身读出当前预设的模型名，再断言它出现在预览里 ——
+   * 这样换任何型号都不会误报，而「预设没被传进去」这个真缺陷仍然抓得到。
+   */
+  const expectedModel = await evaluate(`(() => {
+    const sel = document.getElementById('providerPreset');
+    const p = PROVIDER_PRESETS.find((x) => x.id === sel.value);
+    return p ? p.model : '';
+  })()`);
+  check('取到了预设的模型名（否则下一条会假通过）', Boolean(expectedModel), expectedModel);
+  check('预览里出现预设的模型名',
+    preview.includes(`VRH_PROVIDERS__VISION__MODEL=${expectedModel}`), expectedModel);
   check('预览里不出现 Key 明文（防截图泄露）',
     !preview.includes('sk-preview-test'), '已脱敏');
   check('预览里有 Key 已注入的提示',
